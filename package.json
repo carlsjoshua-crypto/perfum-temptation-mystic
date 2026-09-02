@@ -1,0 +1,19 @@
+{
+  "name": "temptation-mystic-3d-experience",
+  "version": "1.0.0",
+  "description": "Experiencia web premium para el perfume Yanbal Temptation Mystic",
+  "main": "index.html",
+  "scripts": {
+    "dev": "npx -y vite --port 5173",
+    "build": "npx -y vite build",
+    "start": "npx -y vite"
+  },
+  "keywords": [
+    "yanbal",
+    "temptation-mystic",
+    "perfume",
+    "luxury"
+  ],
+  "author": "",
+  "license": "ISC"
+}
