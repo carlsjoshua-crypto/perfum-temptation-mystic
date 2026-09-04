@@ -399,6 +399,131 @@ const collarMaterial = atomizerMatcapMaterial;
 const stemMaterial = atomizerMatcapMaterial;
 const buttonMaterial = atomizerMatcapMaterial;
 
+// Material MatCap exclusivo e independiente para las dos piezas del atomizador:
+// Anillo cilíndrico inferior y pulsador superior (oro champán pulido tipo espejo)
+function createAtomizerPieceMatcapTexture(maxAnisotropy = 8) {
+  const size = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  const imgData = ctx.createImageData(size, size);
+  const data = imgData.data;
+
+  // Paleta calibrada según fotografías reales de referencia (frente, lateral y dorso):
+  // Oro champán pulido tipo espejo con contraste metálico nítido
+  const colBase = [206, 176, 120];      // Base oro champán medio dominante (#ceb078)
+  const colDark = [38, 24, 12];         // Franja vertical oscura de espejo (#26180c)
+  const colCream = [253, 247, 232];     // Reflejo crema vertical de softbox (#fdf7e8)
+  const colWarmGold = [228, 196, 138];  // Transición dorada intermedia cálida (#e4c48a)
+  const colShadow = [82, 58, 30];       // Sombra dorada profunda (#523a1e)
+  const colRim = [112, 78, 36];         // Bordes exteriores tostados (#704e24)
+
+  const cx = size / 2;
+  const cy = size / 2;
+  const radius = size / 2;
+
+  function lerpRGB(c1, c2, t) {
+    const factor = Math.max(0, Math.min(1, t));
+    return [
+      c1[0] + (c2[0] - c1[0]) * factor,
+      c1[1] + (c2[1] - c1[1]) * factor,
+      c1[2] + (c2[2] - c1[2]) * factor,
+    ];
+  }
+
+  function smoothstep(minVal, maxVal, val) {
+    const x = Math.max(0, Math.min(1, (val - minVal) / (maxVal - minVal)));
+    return x * x * (3 - 2 * x);
+  }
+
+  for (let y = 0; y < size; y++) {
+    const ny = -(y - cy) / radius;
+    for (let x = 0; x < size; x++) {
+      const nx = (x - cx) / radius;
+      const r2 = nx * nx + ny * ny;
+      const idx = (y * size + x) * 4;
+
+      if (r2 > 1.0) {
+        data[idx] = colRim[0];
+        data[idx + 1] = colRim[1];
+        data[idx + 2] = colRim[2];
+        data[idx + 3] = 255;
+        continue;
+      }
+
+      const nz = Math.sqrt(Math.max(0, 1.0 - r2));
+      const rimFactor = Math.pow(1.0 - nz, 2.2);
+
+      // 1. Base oro champán con degradado sutil
+      let rgb = colBase;
+
+      // 2. Transición hacia sombra en el cuadrante izquierdo
+      const shadowFactor = smoothstep(0.05, -0.75, nx);
+      rgb = lerpRGB(rgb, colShadow, shadowFactor * 0.55);
+
+      // 3. Franja vertical crema secundaria izquierda (nx = -0.58)
+      const leftHlDist = Math.abs(nx - (-0.58));
+      const leftHl = Math.exp(-(leftHlDist * leftHlDist) / 0.016) * smoothstep(0.04, 0.40, nz);
+      rgb = lerpRGB(rgb, colCream, leftHl * 0.72);
+
+      // 4. Franja vertical oscura y estrecha (nx = -0.02)
+      const darkDist = Math.abs(nx - (-0.02));
+      const darkStripe = Math.exp(-(darkDist * darkDist) / 0.007) * smoothstep(0.06, 0.45, nz);
+      rgb = lerpRGB(rgb, colDark, darkStripe * 0.88);
+
+      // 5. Transición dorada intermedia cálida (nx = 0.08 a 0.22)
+      const transZone = smoothstep(0.04, 0.16, nx) * (1.0 - smoothstep(0.24, 0.50, nx));
+      rgb = lerpRGB(rgb, colWarmGold, transZone * 0.75);
+
+      // 6. Franja crema vertical principal amplia (nx = 0.32)
+      const rightHlDist = Math.abs(nx - 0.32);
+      const rightHl = Math.exp(-(rightHlDist * rightHlDist) / 0.018) * smoothstep(0.05, 0.45, nz);
+      rgb = lerpRGB(rgb, colCream, rightHl * 0.94);
+
+      // 7. Bordes exteriores más oscuros con contraste metálico
+      rgb = lerpRGB(rgb, colRim, rimFactor * 0.80);
+
+      // 8. Iluminación cenital y rasante de estudio sobre curvaturas (ny)
+      if (ny > 0.0) {
+        rgb = lerpRGB(rgb, colWarmGold, ny * 0.22 * nz);
+        const topRim = Math.pow(Math.max(0, ny), 3.0) * smoothstep(0.1, 0.6, nz);
+        rgb = lerpRGB(rgb, colCream, topRim * 0.35);
+      } else {
+        rgb = lerpRGB(rgb, colDark, (-ny) * 0.18 * nz);
+      }
+
+      data[idx] = Math.round(rgb[0]);
+      data[idx + 1] = Math.round(rgb[1]);
+      data[idx + 2] = Math.round(rgb[2]);
+      data[idx + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(imgData, 0, 0);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = maxAnisotropy;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+const atomizerPieceMatcap = createAtomizerPieceMatcapTexture(
+  renderer ? renderer.capabilities.getMaxAnisotropy() : 8
+);
+
+// Instancia independiente de material para el anillo inferior y el pulsador superior
+const atomizerPieceMaterial = new THREE.MeshMatcapMaterial({
+  color: 0xffffff,
+  matcap: atomizerPieceMatcap,
+  transparent: false,
+  opacity: 1.0,
+  depthTest: true,
+  depthWrite: true,
+  side: THREE.DoubleSide,
+});
+
 // 8. Franja de brillo para profundidad visual sobre el frente del cilindro
 const atomizerGoldHighlightMaterial = new THREE.MeshBasicMaterial({
   color: 0xffe3a0,
@@ -2003,71 +2128,70 @@ function buildProceduralAtomizer() {
   group.name = 'atomizerGroup';
   group.renderOrder = 4;
 
-  // a) Collar inferior metálico alrededor del cuello
-  const ringRadius = 0.0116;
-  const ringGeo = new THREE.CylinderGeometry(ringRadius, ringRadius * 1.025, 0.0024, 64);
+  // a) Collar o anillo inferior metálico alrededor del cuello
+  // Construcción mediante perfil torneado (LatheGeometry) con biseles superior e inferior reales
+  // y laterales perfectamente rectos según referencias
+  const ringRadius = 0.0116;          // Diámetro exterior 0.0232 m
+  const ringHeight = 0.0131;          // Altura 13.1 mm (cubre desde Y = 0.0294 hasta Y = 0.0425)
+  const ringHalfH = ringHeight / 2;    // 0.00655 m
+
+  const ringPoints = [
+    new THREE.Vector2(0.0070, -ringHalfH),           // Borde interior inferior
+    new THREE.Vector2(0.0111, -ringHalfH),           // Borde plano inferior antes del bisel
+    new THREE.Vector2(0.0115, -ringHalfH + 0.00020), // Bisel inferior redondeado suave
+    new THREE.Vector2(ringRadius, -ringHalfH + 0.00055), // Inicio de pared cilíndrica recta exterior
+    new THREE.Vector2(ringRadius, ringHalfH - 0.00055),  // Fin de pared cilíndrica recta exterior
+    new THREE.Vector2(0.0115, ringHalfH - 0.00020),  // Bisel exterior superior suave
+    new THREE.Vector2(0.0111, ringHalfH),            // Cara plana superior inicio
+    new THREE.Vector2(0.0091, ringHalfH),            // Cara plana superior fin
+    new THREE.Vector2(0.0089, ringHalfH - 0.00030),   // Bisel interior superior
+    new THREE.Vector2(0.0089, -0.00300),             // Cavidad cilíndrica interna para el recorrido del pulsador
+    new THREE.Vector2(0.0070, -0.00350),             // Transición de cavidad interna
+    new THREE.Vector2(0.0070, -ringHalfH),           // Cierre inferior
+  ];
+
+  const ringGeo = new THREE.LatheGeometry(ringPoints, 64);
   ringGeo.computeVertexNormals();
-  const ringMesh = new THREE.Mesh(ringGeo, atomizerMirrorGoldMaterial);
+  const ringMesh = new THREE.Mesh(ringGeo, atomizerPieceMaterial);
   ringMesh.name = 'atomizerRing';
-  ringMesh.position.set(0, 0.0306, 0);
+  ringMesh.position.set(0, 0.03595, 0); // Posición centrada entre Y = 0.0294 y 0.0425
   ringMesh.renderOrder = 4;
   group.add(ringMesh);
-
-  // Vástago cilíndrico intermedio
-  const stemRadius = 0.0055;
-  const stemHeight = 0.0050;
-  const stemGeo = new THREE.CylinderGeometry(stemRadius, stemRadius, stemHeight, 48);
-  stemGeo.translate(0, stemHeight / 2, 0);
-  stemGeo.computeVertexNormals();
-  const stemMesh = new THREE.Mesh(stemGeo, atomizerMirrorGoldMaterial);
-  stemMesh.name = 'atomizerStem';
-  stemMesh.position.set(0, 0.0318, 0);
-  stemMesh.renderOrder = 4;
-  group.add(stemMesh);
 
   // Grupo del pulsador móvil (cabeza presionable)
   pulsadorGroup = new THREE.Group();
   pulsadorGroup.name = 'pulsadorGroup';
-  pulsadorGroup.position.set(0, 0.0430, 0);
+  pulsadorGroup.position.set(0, 0.0430, 0); // Separación mínima y realista de 0.5 mm sobre el anillo
   pulsadorGroup.renderOrder = 4;
 
-  // b) Cabeza presionable
-  const buttonRadius = 0.0076;
-  const buttonHeight = 0.0105;
-  const buttonGeo = new THREE.CylinderGeometry(buttonRadius, buttonRadius, buttonHeight, 64);
-  buttonGeo.translate(0, buttonHeight / 2, 0);
+  // b) Pulsador superior cilíndrico más estrecho con bisel suave en el borde superior
+  // Geometría cilíndrica cerrada de 360°, con devanado ascendente (de base a tope)
+  // para garantizar normales 100% exteriores, tapa superior y pared lateral completas
+  const buttonRadius = 0.0083; // Diámetro exterior 0.0166 m (proporción anillo/pulsador = 1.398 ~ 1.40)
+  const buttonPoints = [
+    new THREE.Vector2(0.0001, -0.0025),              // Centro de la base inferior (tapa inferior cerrada)
+    new THREE.Vector2(buttonRadius, -0.0025),        // Borde inferior del faldón dentro del anillo
+    new THREE.Vector2(buttonRadius, 0.0094),         // Pared cilíndrica recta exterior (360°)
+    new THREE.Vector2(0.0081, 0.0097),               // Bisel redondeado superior 1
+    new THREE.Vector2(0.0078, 0.0099),               // Bisel redondeado superior 2
+    new THREE.Vector2(0.0074, 0.0100),               // Borde exterior plano de la tapa superior
+    new THREE.Vector2(0.0001, 0.0100),               // Centro de la tapa superior (tapa superior cerrada)
+  ];
+
+  const buttonGeo = new THREE.LatheGeometry(buttonPoints, 64);
   buttonGeo.computeVertexNormals();
-  const buttonMesh = new THREE.Mesh(buttonGeo, atomizerMirrorGoldMaterial);
+  const buttonMesh = new THREE.Mesh(buttonGeo, atomizerPieceMaterial);
   buttonMesh.name = 'atomizerButton';
   buttonMesh.renderOrder = 4;
   pulsadorGroup.add(buttonMesh);
-
-  // Franja vertical de brillo previa desactivada para permitir reflejos espejo físicos puros
-  const highlightRadius = buttonRadius + 0.00008;
-  const highlightHeight = buttonHeight * 0.94;
-  const highlightGeo = new THREE.CylinderGeometry(
-    highlightRadius,
-    highlightRadius,
-    highlightHeight,
-    16,
-    1,
-    true,
-    -Math.PI * 0.16,
-    Math.PI * 0.08
-  );
-  highlightGeo.translate(0, buttonHeight / 2, 0);
-  const highlightMesh = new THREE.Mesh(highlightGeo, atomizerGoldHighlightMaterial);
-  highlightMesh.name = 'atomizerGoldHighlight';
-  highlightMesh.visible = false;
-  pulsadorGroup.add(highlightMesh);
 
   // c) Boquilla metálica en la cara frontal (+Z)
   const nozzleOuterGeo = new THREE.CylinderGeometry(0.0011, 0.0011, 0.0006, 32);
   nozzleOuterGeo.rotateX(Math.PI / 2);
   nozzleOuterGeo.computeVertexNormals();
-  const nozzleOuterMesh = new THREE.Mesh(nozzleOuterGeo, atomizerMirrorGoldMaterial);
+  const nozzleOuterMesh = new THREE.Mesh(nozzleOuterGeo, atomizerPieceMaterial);
   nozzleOuterMesh.name = 'sprayNozzleOuter';
-  nozzleOuterMesh.position.set(0, 0.0072, buttonRadius + 0.0002);
+  nozzleOuterMesh.position.set(0, 0.0066, buttonRadius + 0.00015);
   nozzleOuterMesh.renderOrder = 4;
   pulsadorGroup.add(nozzleOuterMesh);
 
@@ -2077,24 +2201,9 @@ function buildProceduralAtomizer() {
   const pinholeMat = new THREE.MeshBasicMaterial({ color: 0x040404 });
   sprayPinholeMesh = new THREE.Mesh(pinholeGeo, pinholeMat);
   sprayPinholeMesh.name = 'sprayPinhole';
-  sprayPinholeMesh.position.set(0, 0.0072, buttonRadius + 0.00025);
+  sprayPinholeMesh.position.set(0, 0.0066, buttonRadius + 0.00025);
   sprayPinholeMesh.renderOrder = 4;
   pulsadorGroup.add(sprayPinholeMesh);
-
-  // Asegurar asignación de atomizerMirrorGoldMaterial a las piezas metálicas del atomizador
-  group.traverse((child) => {
-    if (
-      child.isMesh &&
-      child.name !== 'sprayPinhole' &&
-      child.name !== 'atomizerGoldHighlight'
-    ) {
-      if (child.geometry) {
-        child.geometry.computeVertexNormals();
-      }
-      child.material = atomizerMirrorGoldMaterial;
-      child.renderOrder = 4;
-    }
-  });
 
   group.add(pulsadorGroup);
   return group;
@@ -2798,7 +2907,10 @@ loader.load(
           child.name === 'dipTubeEndCap' ||
           child.name === 'connectorLevel1' ||
           child.name === 'connectorLevel2' ||
-          child.name === 'connectorLevel3'
+          child.name === 'connectorLevel3' ||
+          child.name === 'atomizerRing' ||
+          child.name === 'atomizerButton' ||
+          child.name === 'sprayNozzleOuter'
         ) {
           return;
         }
