@@ -121,10 +121,6 @@ let capOriginalFrontTexture = null;
 let capOriginalBackTexture = null;
 let capCleanFrontTexture = null;
 let capCleanBackTexture = null;
-let capSideClosedTexture = null;
-let capSideCleanTexture = null;
-let capSideClosedMirroredTexture = null;
-let capSideCleanMirroredTexture = null;
 
 // Objeto mutable de uniformes exclusivo para la tapa
 const capMultiviewUniforms = {
@@ -133,10 +129,6 @@ const capMultiviewUniforms = {
   uCapOrigBack: { value: null },
   uCapCleanFront: { value: null },
   uCapCleanBack: { value: null },
-  uCapSideClosedRight: { value: null },
-  uCapSideCleanRight: { value: null },
-  uCapSideClosedLeft: { value: null },
-  uCapSideCleanLeft: { value: null },
   uTexRight: { value: null },
   uTexLeft: { value: null },
   uCapLocalBoxMin: { value: new THREE.Vector3() },
@@ -970,14 +962,72 @@ function setupSidePhotoProjections(
         }
 
         // -------------------------------------------------------------
-        // 2. Tapa lateral (Gestionada con referencias closed y clean independientes)
+        // 2. Tapa lateral (Tapa: x=0.418, y=0.347, width=0.160, height=0.088)
         // -------------------------------------------------------------
         if (targetCapGroup && capMesh) {
-          setupCapSideTextures(targetCapGroup, capMesh);
+          const sx = img.width * 0.418;
+          const sy = img.height * 0.347;
+          const sWidth = img.width * 0.160;
+          const sHeight = img.height * 0.088;
+
+          const canvasW = 512;
+          const canvasH = Math.round(canvasW * (sHeight / sWidth));
+
+          // Canvas original (derecho)
+          const capRightCanvas = document.createElement('canvas');
+          capRightCanvas.width = canvasW;
+          capRightCanvas.height = canvasH;
+          const ctxR = capRightCanvas.getContext('2d');
+          ctxR.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, canvasW, canvasH);
+
+          // Canvas reflejado horizontalmente (izquierdo)
+          const capLeftCanvas = document.createElement('canvas');
+          capLeftCanvas.width = canvasW;
+          capLeftCanvas.height = canvasH;
+          const ctxL = capLeftCanvas.getContext('2d');
+          ctxL.save();
+          ctxL.scale(-1, 1);
+          ctxL.drawImage(img, sx, sy, sWidth, sHeight, -canvasW, 0, canvasW, canvasH);
+          ctxL.restore();
+
+          capRightCanvasTexture = createSideTexture(capRightCanvas);
+          capLeftCanvasTexture = createSideTexture(capLeftCanvas);
+          capMultiviewUniforms.uTexRight.value = capRightCanvasTexture;
+          capMultiviewUniforms.uTexLeft.value = capLeftCanvasTexture;
+
+          tryInitCapMultiviewShader();
+
+          capRightPhotoMaterial = createSideMaterial(capRightCanvasTexture);
+          capLeftPhotoMaterial = createSideMaterial(capLeftCanvasTexture);
+
+          const tapaBox = new THREE.Box3().setFromObject(capMesh);
+          const tapaSize = tapaBox.getSize(new THREE.Vector3());
+          const tapaCenter = tapaBox.getCenter(new THREE.Vector3());
+
+          const sideWidth = tapaSize.z * 0.98;
+          const sideHeight = tapaSize.y * 0.98;
+          const capSideGeo = new THREE.PlaneGeometry(sideWidth, sideHeight);
+
+          // Lateral derecho (+X)
+          capRightPhotoProjection = new THREE.Mesh(capSideGeo, capRightPhotoMaterial);
+          capRightPhotoProjection.name = 'capRightPhotoProjection';
+          capRightPhotoProjection.renderOrder = 5;
+          capRightPhotoProjection.position.set(tapaBox.max.x + 0.00012, tapaCenter.y, 0);
+          capRightPhotoProjection.rotation.y = Math.PI / 2;
+          targetCapGroup.add(capRightPhotoProjection);
+
+          // Lateral izquierdo (-X)
+          capLeftPhotoProjection = new THREE.Mesh(capSideGeo, capLeftPhotoMaterial);
+          capLeftPhotoProjection.name = 'capLeftPhotoProjection';
+          capLeftPhotoProjection.renderOrder = 5;
+          capLeftPhotoProjection.position.set(tapaBox.min.x - 0.00012, tapaCenter.y, 0);
+          capLeftPhotoProjection.rotation.y = -Math.PI / 2;
+          targetCapGroup.add(capLeftPhotoProjection);
         }
 
-        // Intentar inicializar shader multivista del cuerpo cuando sus texturas laterales estén listas
+        // Intentar inicializar shaders multivistas cuando las texturas laterales estén listas
         tryInitBodyMultiviewShader();
+        tryInitCapMultiviewShader();
       } catch (err) {
         console.error('Error al configurar proyecciones laterales:', err);
       }
@@ -986,209 +1036,6 @@ function setupSidePhotoProjections(
     (error) => {
       console.error('No se pudo cargar la imagen de referencia lateral:', error);
     }
-  );
-}
-
-// ==========================================================================
-// Texturas Laterales de la Tapa (Cerrada y Limpia)
-// ==========================================================================
-function setupCapSideTextures(targetCapGroup, capMesh) {
-  const textureLoader = new THREE.TextureLoader();
-
-  let closedImg = null;
-  let cleanImg = null;
-
-  function processCapSideTextures() {
-    if (!closedImg || !cleanImg) return;
-
-    try {
-      // 1. Detectar los límites reales no transparentes de cada imagen
-      function detectBounds(img) {
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = img.width;
-        tempCanvas.height = img.height;
-        const tempCtx = tempCanvas.getContext('2d');
-        if (!tempCtx) return { minX: 510, maxX: 744, minY: 556, maxY: 697 };
-        tempCtx.drawImage(img, 0, 0);
-        const data = tempCtx.getImageData(0, 0, img.width, img.height).data;
-        let minX = img.width, maxX = 0, minY = img.height, maxY = 0;
-        for (let y = 0; y < img.height; y++) {
-          for (let x = 0; x < img.width; x++) {
-            if (data[(y * img.width + x) * 4 + 3] > 10) {
-              if (x < minX) minX = x;
-              if (x > maxX) maxX = x;
-              if (y < minY) minY = y;
-              if (y > maxY) maxY = y;
-            }
-          }
-        }
-        if (minX > maxX || minY > maxY) {
-          minX = 510; maxX = 744; minY = 556; maxY = 697;
-        }
-        return { minX, maxX, minY, maxY };
-      }
-
-      const boundsClosed = detectBounds(closedImg);
-      const boundsClean = detectBounds(cleanImg);
-
-      // Marco envolvente unificado para garantizar coincidencia perfecta:
-      // mismo tamaño, mismo centro, misma altura, mismo ancho, misma silueta y misma posición vertical
-      const minX = Math.min(boundsClosed.minX, boundsClean.minX);
-      const maxX = Math.max(boundsClosed.maxX, boundsClean.maxX);
-      const minY = Math.min(boundsClosed.minY, boundsClean.minY);
-      const maxY = Math.max(boundsClosed.maxY, boundsClean.maxY);
-
-      const cropW = maxX - minX + 1;
-      const cropH = maxY - minY + 1;
-
-      const canvasW = 512;
-      const canvasH = Math.round(canvasW * (cropH / cropW));
-
-      // 1. Lateral derecho cerrada (temptation-mystic-cap-side-closed.png)
-      const canvasClosed = document.createElement('canvas');
-      canvasClosed.width = canvasW;
-      canvasClosed.height = canvasH;
-      const ctxClosed = canvasClosed.getContext('2d');
-      ctxClosed.drawImage(closedImg, minX, minY, cropW, cropH, 0, 0, canvasW, canvasH);
-
-      capSideClosedTexture = new THREE.CanvasTexture(canvasClosed);
-      capSideClosedTexture.colorSpace = THREE.SRGBColorSpace;
-      capSideClosedTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      capSideClosedTexture.flipY = true;
-      capSideClosedTexture.needsUpdate = true;
-      capMultiviewUniforms.uCapSideClosedRight.value = capSideClosedTexture;
-
-      // 2. Lateral derecho limpia (temptation-mystic-cap-side-clean.png)
-      const canvasClean = document.createElement('canvas');
-      canvasClean.width = canvasW;
-      canvasClean.height = canvasH;
-      const ctxClean = canvasClean.getContext('2d');
-      ctxClean.drawImage(cleanImg, minX, minY, cropW, cropH, 0, 0, canvasW, canvasH);
-
-      capSideCleanTexture = new THREE.CanvasTexture(canvasClean);
-      capSideCleanTexture.colorSpace = THREE.SRGBColorSpace;
-      capSideCleanTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      capSideCleanTexture.flipY = true;
-      capSideCleanTexture.needsUpdate = true;
-      capMultiviewUniforms.uCapSideCleanRight.value = capSideCleanTexture;
-
-      // 3. Lateral izquierdo cerrada (reflejada horizontalmente mediante canvas)
-      const canvasClosedM = document.createElement('canvas');
-      canvasClosedM.width = canvasW;
-      canvasClosedM.height = canvasH;
-      const ctxClosedM = canvasClosedM.getContext('2d');
-      ctxClosedM.save();
-      ctxClosedM.translate(canvasW, 0);
-      ctxClosedM.scale(-1, 1);
-      ctxClosedM.drawImage(canvasClosed, 0, 0);
-      ctxClosedM.restore();
-
-      capSideClosedMirroredTexture = new THREE.CanvasTexture(canvasClosedM);
-      capSideClosedMirroredTexture.colorSpace = THREE.SRGBColorSpace;
-      capSideClosedMirroredTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      capSideClosedMirroredTexture.flipY = true;
-      capSideClosedMirroredTexture.needsUpdate = true;
-      capMultiviewUniforms.uCapSideClosedLeft.value = capSideClosedMirroredTexture;
-
-      // 4. Lateral izquierdo limpia (reflejada horizontalmente mediante canvas)
-      const canvasCleanM = document.createElement('canvas');
-      canvasCleanM.width = canvasW;
-      canvasCleanM.height = canvasH;
-      const ctxCleanM = canvasCleanM.getContext('2d');
-      ctxCleanM.save();
-      ctxCleanM.translate(canvasW, 0);
-      ctxCleanM.scale(-1, 1);
-      ctxCleanM.drawImage(canvasClean, 0, 0);
-      ctxCleanM.restore();
-
-      capSideCleanMirroredTexture = new THREE.CanvasTexture(canvasCleanM);
-      capSideCleanMirroredTexture.colorSpace = THREE.SRGBColorSpace;
-      capSideCleanMirroredTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      capSideCleanMirroredTexture.flipY = true;
-      capSideCleanMirroredTexture.needsUpdate = true;
-      capMultiviewUniforms.uCapSideCleanLeft.value = capSideCleanMirroredTexture;
-
-      // Actualizar referencias uTexRight / uTexLeft para retrocompatibilidad
-      capRightCanvasTexture = capSideClosedTexture;
-      capLeftCanvasTexture = capSideClosedMirroredTexture;
-      capMultiviewUniforms.uTexRight.value = capSideClosedTexture;
-      capMultiviewUniforms.uTexLeft.value = capSideClosedMirroredTexture;
-
-      if (targetCapGroup && capMesh) {
-        const tapaBox = new THREE.Box3().setFromObject(capMesh);
-        const tapaSize = tapaBox.getSize(new THREE.Vector3());
-        const tapaCenter = tapaBox.getCenter(new THREE.Vector3());
-
-        const sideWidth = tapaSize.z * 0.98;
-        const sideHeight = tapaSize.y * 0.98;
-        const capSideGeo = new THREE.PlaneGeometry(sideWidth, sideHeight);
-
-        capRightPhotoMaterial = new THREE.MeshBasicMaterial({
-          map: capSideClosedTexture,
-          transparent: true,
-          opacity: 0,
-          depthTest: true,
-          depthWrite: false,
-          side: THREE.FrontSide,
-          toneMapped: false,
-        });
-        capLeftPhotoMaterial = new THREE.MeshBasicMaterial({
-          map: capSideClosedMirroredTexture,
-          transparent: true,
-          opacity: 0,
-          depthTest: true,
-          depthWrite: false,
-          side: THREE.FrontSide,
-          toneMapped: false,
-        });
-
-        if (!capRightPhotoProjection) {
-          capRightPhotoProjection = new THREE.Mesh(capSideGeo, capRightPhotoMaterial);
-          capRightPhotoProjection.name = 'capRightPhotoProjection';
-          capRightPhotoProjection.renderOrder = 5;
-          capRightPhotoProjection.position.set(tapaBox.max.x + 0.00012, tapaCenter.y, 0);
-          capRightPhotoProjection.rotation.y = Math.PI / 2;
-          targetCapGroup.add(capRightPhotoProjection);
-        } else {
-          capRightPhotoProjection.material = capRightPhotoMaterial;
-        }
-
-        if (!capLeftPhotoProjection) {
-          capLeftPhotoProjection = new THREE.Mesh(capSideGeo, capLeftPhotoMaterial);
-          capLeftPhotoProjection.name = 'capLeftPhotoProjection';
-          capLeftPhotoProjection.renderOrder = 5;
-          capLeftPhotoProjection.position.set(tapaBox.min.x - 0.00012, tapaCenter.y, 0);
-          capLeftPhotoProjection.rotation.y = -Math.PI / 2;
-          targetCapGroup.add(capLeftPhotoProjection);
-        } else {
-          capLeftPhotoProjection.material = capLeftPhotoMaterial;
-        }
-      }
-
-      tryInitCapMultiviewShader();
-    } catch (err) {
-      console.error('Error al procesar texturas laterales de la tapa:', err);
-    }
-  }
-
-  textureLoader.load(
-    './assets/models/temptation-mystic-cap-side-closed.png',
-    (loadedTex) => {
-      closedImg = loadedTex.image;
-      processCapSideTextures();
-    },
-    undefined,
-    (err) => console.error('Error cargando assets/models/temptation-mystic-cap-side-closed.png:', err)
-  );
-
-  textureLoader.load(
-    './assets/models/temptation-mystic-cap-side-clean.png',
-    (loadedTex) => {
-      cleanImg = loadedTex.image;
-      processCapSideTextures();
-    },
-    undefined,
-    (err) => console.error('Error cargando assets/models/temptation-mystic-cap-side-clean.png:', err)
   );
 }
 
@@ -1438,8 +1285,8 @@ function tryInitCapMultiviewShader(tMesh, tBox, lBox, lSize) {
   if (
     !capOriginalFrontTexture ||
     !capOriginalBackTexture ||
-    (!capSideClosedTexture && !capRightCanvasTexture) ||
-    (!capSideClosedMirroredTexture && !capLeftCanvasTexture)
+    !capRightCanvasTexture ||
+    !capLeftCanvasTexture
   ) {
     return;
   }
@@ -1451,21 +1298,12 @@ function tryInitCapMultiviewShader(tMesh, tBox, lBox, lSize) {
     savedTapaLocalSize = savedTapaLocalBox.getSize(new THREE.Vector3());
   }
 
-  const sideClosedRight = capSideClosedTexture || capRightCanvasTexture;
-  const sideCleanRight = capSideCleanTexture || sideClosedRight;
-  const sideClosedLeft = capSideClosedMirroredTexture || capLeftCanvasTexture;
-  const sideCleanLeft = capSideCleanMirroredTexture || sideClosedLeft;
-
   capMultiviewUniforms.uCapOrigFront.value = capOriginalFrontTexture;
   capMultiviewUniforms.uCapOrigBack.value = capOriginalBackTexture;
   capMultiviewUniforms.uCapCleanFront.value = capCleanFrontTexture || capOriginalFrontTexture;
   capMultiviewUniforms.uCapCleanBack.value = capCleanBackTexture || capOriginalBackTexture;
-  capMultiviewUniforms.uCapSideClosedRight.value = sideClosedRight;
-  capMultiviewUniforms.uCapSideCleanRight.value = sideCleanRight;
-  capMultiviewUniforms.uCapSideClosedLeft.value = sideClosedLeft;
-  capMultiviewUniforms.uCapSideCleanLeft.value = sideCleanLeft;
-  capMultiviewUniforms.uTexRight.value = sideClosedRight;
-  capMultiviewUniforms.uTexLeft.value = sideClosedLeft;
+  capMultiviewUniforms.uTexRight.value = capRightCanvasTexture;
+  capMultiviewUniforms.uTexLeft.value = capLeftCanvasTexture;
   capMultiviewUniforms.uCapLocalBoxMin.value.set(
     savedTapaLocalBox.min.x,
     savedTapaLocalBox.min.y,
@@ -1499,10 +1337,6 @@ function tryInitCapMultiviewShader(tMesh, tBox, lBox, lSize) {
         shader.uniforms.uCapOrigBack = capMultiviewUniforms.uCapOrigBack;
         shader.uniforms.uCapCleanFront = capMultiviewUniforms.uCapCleanFront;
         shader.uniforms.uCapCleanBack = capMultiviewUniforms.uCapCleanBack;
-        shader.uniforms.uCapSideClosedRight = capMultiviewUniforms.uCapSideClosedRight;
-        shader.uniforms.uCapSideCleanRight = capMultiviewUniforms.uCapSideCleanRight;
-        shader.uniforms.uCapSideClosedLeft = capMultiviewUniforms.uCapSideClosedLeft;
-        shader.uniforms.uCapSideCleanLeft = capMultiviewUniforms.uCapSideCleanLeft;
         shader.uniforms.uTexRight = capMultiviewUniforms.uTexRight;
         shader.uniforms.uTexLeft = capMultiviewUniforms.uTexLeft;
         shader.uniforms.uCapCleanMix = capMultiviewUniforms.uCapCleanMix;
@@ -1533,10 +1367,6 @@ uniform sampler2D uCapOrigFront;
 uniform sampler2D uCapOrigBack;
 uniform sampler2D uCapCleanFront;
 uniform sampler2D uCapCleanBack;
-uniform sampler2D uCapSideClosedRight;
-uniform sampler2D uCapSideCleanRight;
-uniform sampler2D uCapSideClosedLeft;
-uniform sampler2D uCapSideCleanLeft;
 uniform sampler2D uTexRight;
 uniform sampler2D uTexLeft;
 uniform float uCapCleanMix;
@@ -1575,31 +1405,19 @@ vec4 colOrigBack = sampleCapPhoto(uCapOrigBack, uvBack);
 vec4 colCleanBack = sampleCapPhoto(uCapCleanBack, uvBack);
 vec4 colBack = mix(colOrigBack, colCleanBack, clamp(uCapCleanMix, 0.0, 1.0));
 
-// 3. Proyección lateral derecha (+X, ensanchada para coincidencia y encaje exacto)
+// 3. Proyección lateral derecha (+X, ensanchada adicionalmente ~8% horizontalmente de forma centrada)
 vec2 uvRight = vec2(
-  1.0 - ((normPos.z - 0.5) / 1.095 + 0.5),
+  1.0 - ((normPos.z - 0.5) / 1.195 + 0.5),
   (normPos.y - 0.5) / 0.98 + 0.5
 );
-vec4 capSideClosedColor = sampleCapPhoto(uCapSideClosedRight, uvRight);
-vec4 capSideCleanColor  = sampleCapPhoto(uCapSideCleanRight, uvRight);
-vec4 sideRightColor = mix(
-  capSideClosedColor,
-  capSideCleanColor,
-  clamp(uCapCleanMix, 0.0, 1.0)
-);
+vec4 colRight = sampleCapPhoto(uTexRight, uvRight);
 
-// 4. Proyección lateral izquierda (-X, ensanchada para coincidencia y encaje exacto)
+// 4. Proyección lateral izquierda (-X, ensanchada adicionalmente ~8% horizontalmente de forma centrada)
 vec2 uvLeft = vec2(
-  ((normPos.z - 0.5) / 1.095 + 0.5),
+  ((normPos.z - 0.5) / 1.195 + 0.5),
   (normPos.y - 0.5) / 0.98 + 0.5
 );
-vec4 capSideClosedMirroredColor = sampleCapPhoto(uCapSideClosedLeft, uvLeft);
-vec4 capSideCleanMirroredColor  = sampleCapPhoto(uCapSideCleanLeft, uvLeft);
-vec4 sideLeftColor = mix(
-  capSideClosedMirroredColor,
-  capSideCleanMirroredColor,
-  clamp(uCapCleanMix, 0.0, 1.0)
-);
+vec4 colLeft = sampleCapPhoto(uTexLeft, uvLeft);
 
 // 5. Pesos según normales locales para mezcla suave en curvaturas, semiarco y biseles
 vec3 n = normalize(vCapLocalNormal);
@@ -1616,8 +1434,8 @@ weights /= max(totalWeight, 0.0001);
 // Respetar canal alfa de cada vista y fundir con el material rubí base
 vec3 cFront = mix(uBaseRuby, colFront.rgb, colFront.a);
 vec3 cBack  = mix(uBaseRuby, colBack.rgb, colBack.a);
-vec3 cRight = mix(uBaseRuby, sideRightColor.rgb, sideRightColor.a);
-vec3 cLeft  = mix(uBaseRuby, sideLeftColor.rgb, sideLeftColor.a);
+vec3 cRight = mix(uBaseRuby, colRight.rgb, colRight.a);
+vec3 cLeft  = mix(uBaseRuby, colLeft.rgb, colLeft.a);
 
 vec3 blendedPhoto = cFront * weights.x +
                     cBack  * weights.y +
@@ -1636,10 +1454,6 @@ diffuseColor.a = 1.0;`
       if (s.uniforms.uCapOrigBack) s.uniforms.uCapOrigBack.value = capMultiviewUniforms.uCapOrigBack.value;
       if (s.uniforms.uCapCleanFront) s.uniforms.uCapCleanFront.value = capMultiviewUniforms.uCapCleanFront.value;
       if (s.uniforms.uCapCleanBack) s.uniforms.uCapCleanBack.value = capMultiviewUniforms.uCapCleanBack.value;
-      if (s.uniforms.uCapSideClosedRight) s.uniforms.uCapSideClosedRight.value = capMultiviewUniforms.uCapSideClosedRight.value;
-      if (s.uniforms.uCapSideCleanRight) s.uniforms.uCapSideCleanRight.value = capMultiviewUniforms.uCapSideCleanRight.value;
-      if (s.uniforms.uCapSideClosedLeft) s.uniforms.uCapSideClosedLeft.value = capMultiviewUniforms.uCapSideClosedLeft.value;
-      if (s.uniforms.uCapSideCleanLeft) s.uniforms.uCapSideCleanLeft.value = capMultiviewUniforms.uCapSideCleanLeft.value;
       if (s.uniforms.uTexRight) s.uniforms.uTexRight.value = capMultiviewUniforms.uTexRight.value;
       if (s.uniforms.uTexLeft) s.uniforms.uTexLeft.value = capMultiviewUniforms.uTexLeft.value;
     }
@@ -2650,7 +2464,6 @@ loader.load(
 
     // Proyecciones fotográficas laterales (cuerpo, tapa y cuello)
     setupSidePhotoProjections(cuerpoMesh, cuerpoSize, cuerpoCenter, cuerpoBox, capGroup, tapaMesh, cuelloMesh);
-    setupCapSideTextures(capGroup, tapaMesh);
 
     // Inicializar shader multivista del cuerpo si las texturas ya están preparadas
     tryInitBodyMultiviewShader(cuerpoMesh, cuerpoSize, cuerpoBox, localBox, localSize);
