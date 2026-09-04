@@ -269,127 +269,93 @@ const atomizerGoldMaterial = new THREE.MeshBasicMaterial({
 });
 
 // ==========================================================================
-// Estrategia 2: Textura MatCap de Oro Champán Pulido con Reflejo Espejo
+// Entorno de Estudio Neutro con Softboxes Verticales Exclusivo para el Atomizador
 // ==========================================================================
-function createChampagneMatcapTexture(maxAnisotropy = 8) {
-  const size = 512;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  const imgData = ctx.createImageData(size, size);
-  const data = imgData.data;
+function createAtomizerStudioEnvMap(glRenderer) {
+  const pmremGenerator = new THREE.PMREMGenerator(glRenderer);
+  pmremGenerator.compileEquirectangularShader();
 
-  // Paleta de referencia:
-  // - Bordes exteriores: dorado tostado #795426
-  // - Zona de sombra: oro oscuro #96713A
-  // - Base dominante: oro champán #C6A66A
-  // - Transición clara: champán crema #D8C294
-  // - Reflejo principal: crema #E9E2D8
-  const colRim = [121, 84, 38];
-  const colShadow = [150, 113, 58];
-  const colBase = [198, 166, 106];
-  const colTrans = [216, 194, 148];
-  const colHl = [233, 226, 216];
+  const envCanvas = document.createElement('canvas');
+  envCanvas.width = 1024;
+  envCanvas.height = 512;
+  const ctx = envCanvas.getContext('2d');
 
-  function lerpRGB(a, b, t) {
-    const s = Math.max(0, Math.min(1, t));
-    return [
-      a[0] + (b[0] - a[0]) * s,
-      a[1] + (b[1] - a[1]) * s,
-      a[2] + (b[2] - a[2]) * s,
-    ];
+  // Fondo de estudio neutro oscuro (carbón suave con tonalidad cálida profunda)
+  const bgGrad = ctx.createLinearGradient(0, 0, 0, envCanvas.height);
+  bgGrad.addColorStop(0.0, '#100f12');
+  bgGrad.addColorStop(0.5, '#0a090b');
+  bgGrad.addColorStop(1.0, '#040405');
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, envCanvas.width, envCanvas.height);
+
+  // Función para trazar softboxes verticales de estudio
+  function drawVerticalSoftbox(cx, width, heightRatio, colorCenter, colorEdge) {
+    const w = width;
+    const grad = ctx.createLinearGradient(cx - w / 2, 0, cx + w / 2, 0);
+    grad.addColorStop(0.0, 'rgba(0,0,0,0)');
+    grad.addColorStop(0.2, colorEdge);
+    grad.addColorStop(0.5, colorCenter);
+    grad.addColorStop(0.8, colorEdge);
+    grad.addColorStop(1.0, 'rgba(0,0,0,0)');
+
+    const yTop = envCanvas.height * (1 - heightRatio) / 2;
+    const yHeight = envCanvas.height * heightRatio;
+
+    ctx.save();
+    ctx.fillStyle = grad;
+    ctx.fillRect(cx - w / 2, yTop, w, yHeight);
+    ctx.restore();
   }
 
-  function smoothstep(min, max, value) {
-    const x = Math.max(0, Math.min(1, (value - min) / (max - min)));
-    return x * x * (3 - 2 * x);
-  }
+  // 1. Softbox principal frontal-derecho (reflejo vertical suave, sin blancos quemados)
+  drawVerticalSoftbox(envCanvas.width * 0.32, 130, 0.85, 'rgba(255, 246, 230, 0.88)', 'rgba(230, 210, 180, 0.28)');
 
-  const cx = size / 2;
-  const cy = size / 2;
-  const radius = (size / 2) - 2;
+  // 2. Softbox de relleno izquierdo (contraste y definición del cilindro)
+  drawVerticalSoftbox(envCanvas.width * 0.72, 105, 0.80, 'rgba(242, 235, 220, 0.70)', 'rgba(210, 190, 160, 0.20)');
 
-  for (let y = 0; y < size; y++) {
-    const ny = -(y - cy) / radius;
-    for (let x = 0; x < size; x++) {
-      const nx = (x - cx) / radius;
-      const r2 = nx * nx + ny * ny;
-      const idx = (y * size + x) * 4;
+  // 3. Franja de perfil posterior sutil para acentuar el borde metálico
+  drawVerticalSoftbox(envCanvas.width * 0.52, 60, 0.70, 'rgba(235, 220, 190, 0.45)', 'rgba(180, 160, 130, 0.12)');
 
-      if (r2 > 1.0) {
-        data[idx] = colRim[0];
-        data[idx + 1] = colRim[1];
-        data[idx + 2] = colRim[2];
-        data[idx + 3] = 255;
-        continue;
-      }
+  // 4. Suave degradado superior para iluminar la cara superior del pulsador
+  const topGrad = ctx.createRadialGradient(envCanvas.width * 0.4, 0, 10, envCanvas.width * 0.4, 0, 260);
+  topGrad.addColorStop(0.0, 'rgba(255, 248, 235, 0.55)');
+  topGrad.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = topGrad;
+  ctx.fillRect(0, 0, envCanvas.width, 240);
 
-      const nz = Math.sqrt(Math.max(0, 1.0 - r2));
-      const rimFactor = Math.pow(1.0 - nz, 2.0);
+  const envTexture = new THREE.CanvasTexture(envCanvas);
+  envTexture.mapping = THREE.EquirectangularReflectionMapping;
+  envTexture.colorSpace = THREE.SRGBColorSpace;
+  envTexture.needsUpdate = true;
 
-      // 1. Gradiente base: Sombra izquierda -> Base centro
-      const shadowFactor = smoothstep(-0.05, -0.65, nx);
-      let rgb = lerpRGB(colBase, colShadow, shadowFactor);
+  const envRenderTarget = pmremGenerator.fromEquirectangular(envTexture);
+  envTexture.dispose();
+  pmremGenerator.dispose();
 
-      // 2. Segundo reflejo vertical tenue en el lado contrario (nx = -0.50)
-      const fillDist = Math.abs(nx - (-0.50));
-      const fillHl = Math.exp(-(fillDist * fillDist) / 0.038) * smoothstep(0.08, 0.45, nz);
-      rgb = lerpRGB(rgb, colTrans, fillHl * 0.35);
-
-      // 3. Zona de transición hacia el reflejo
-      const transZone = smoothstep(0.02, 0.26, nx) * (1.0 - smoothstep(0.46, 0.82, nx));
-      rgb = lerpRGB(rgb, colTrans, transZone * 0.55);
-
-      // 4. Reflejo principal: franja vertical amplia, suave, color crema, desplazada (nx = 0.26, ~20-25% ancho)
-      const hlDist = Math.abs(nx - 0.26);
-      const mainHl = Math.exp(-(hlDist * hlDist) / 0.020) * smoothstep(0.06, 0.45, nz);
-      rgb = lerpRGB(rgb, colHl, mainHl * 0.95);
-
-      // 5. Bordes exteriores con dorado tostado #795426
-      rgb = lerpRGB(rgb, colRim, rimFactor * 0.85);
-
-      // 6. Sutil luz cenital difusa de estudio
-      if (ny > 0.0) {
-        rgb = lerpRGB(rgb, colTrans, ny * 0.12 * nz);
-      } else {
-        rgb = lerpRGB(rgb, colShadow, (-ny) * 0.15 * nz);
-      }
-
-      data[idx] = Math.round(rgb[0]);
-      data[idx + 1] = Math.round(rgb[1]);
-      data[idx + 2] = Math.round(rgb[2]);
-      data[idx + 3] = 255;
-    }
-  }
-
-  ctx.putImageData(imgData, 0, 0);
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = maxAnisotropy;
-  texture.needsUpdate = true;
-  return texture;
+  return envRenderTarget.texture;
 }
 
-const atomizerChampagneMatcap = createChampagneMatcapTexture(
-  renderer ? renderer.capabilities.getMaxAnisotropy() : 8
-);
+const atomizerStudioEnvMap = createAtomizerStudioEnvMap(renderer);
 
-// Material MatCap exclusivo para el atomizador: oro champán pulido con reflejo espejo
-const atomizerMatcapMaterial = new THREE.MeshMatcapMaterial({
-  color: 0xffffff,
-  matcap: atomizerChampagneMatcap,
+// Material exclusivo para el atomizador: Oro champán pulido con efecto espejo
+const atomizerMirrorGoldMaterial = new THREE.MeshPhysicalMaterial({
+  color: 0xd6a84b,
+  metalness: 1.0,
+  roughness: 0.14,
+  clearcoat: 0.25,
+  clearcoatRoughness: 0.10,
+  envMap: atomizerStudioEnvMap,
+  envMapIntensity: 0.75,
+  toneMapped: true,
 });
 
-// Alias para compatibilidad completa en todo el código
-const atomizerMirrorGoldMaterial = atomizerMatcapMaterial;
-const champagneGoldMaterial = atomizerMatcapMaterial;
-const goldNeckMaterial = atomizerMatcapMaterial;
-const goldMaterial = atomizerMatcapMaterial;
-const collarMaterial = atomizerMatcapMaterial;
-const stemMaterial = atomizerMatcapMaterial;
-const buttonMaterial = atomizerMatcapMaterial;
+// Alias para compatibilidad
+const champagneGoldMaterial = atomizerMirrorGoldMaterial;
+const goldNeckMaterial = atomizerMirrorGoldMaterial;
+const goldMaterial = atomizerMirrorGoldMaterial;
+const collarMaterial = atomizerMirrorGoldMaterial;
+const stemMaterial = atomizerMirrorGoldMaterial;
+const buttonMaterial = atomizerMirrorGoldMaterial;
 
 // 8. Franja de brillo para profundidad visual sobre el frente del cilindro
 const atomizerGoldHighlightMaterial = new THREE.MeshBasicMaterial({

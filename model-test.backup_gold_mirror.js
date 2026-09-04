@@ -258,7 +258,7 @@ const capMaterial = new THREE.MeshPhongMaterial({
   side: THREE.FrontSide,
 });
 
-// 7. Material dorado básico original (conservado para disco superior simulado de la tapa)
+// 7. Material dorado visible desde cualquier ángulo (independiente de la iluminación)
 const atomizerGoldMaterial = new THREE.MeshBasicMaterial({
   color: 0xc9963e,
   transparent: false,
@@ -268,128 +268,13 @@ const atomizerGoldMaterial = new THREE.MeshBasicMaterial({
   toneMapped: false,
 });
 
-// ==========================================================================
-// Estrategia 2: Textura MatCap de Oro Champán Pulido con Reflejo Espejo
-// ==========================================================================
-function createChampagneMatcapTexture(maxAnisotropy = 8) {
-  const size = 512;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  const imgData = ctx.createImageData(size, size);
-  const data = imgData.data;
-
-  // Paleta de referencia:
-  // - Bordes exteriores: dorado tostado #795426
-  // - Zona de sombra: oro oscuro #96713A
-  // - Base dominante: oro champán #C6A66A
-  // - Transición clara: champán crema #D8C294
-  // - Reflejo principal: crema #E9E2D8
-  const colRim = [121, 84, 38];
-  const colShadow = [150, 113, 58];
-  const colBase = [198, 166, 106];
-  const colTrans = [216, 194, 148];
-  const colHl = [233, 226, 216];
-
-  function lerpRGB(a, b, t) {
-    const s = Math.max(0, Math.min(1, t));
-    return [
-      a[0] + (b[0] - a[0]) * s,
-      a[1] + (b[1] - a[1]) * s,
-      a[2] + (b[2] - a[2]) * s,
-    ];
-  }
-
-  function smoothstep(min, max, value) {
-    const x = Math.max(0, Math.min(1, (value - min) / (max - min)));
-    return x * x * (3 - 2 * x);
-  }
-
-  const cx = size / 2;
-  const cy = size / 2;
-  const radius = (size / 2) - 2;
-
-  for (let y = 0; y < size; y++) {
-    const ny = -(y - cy) / radius;
-    for (let x = 0; x < size; x++) {
-      const nx = (x - cx) / radius;
-      const r2 = nx * nx + ny * ny;
-      const idx = (y * size + x) * 4;
-
-      if (r2 > 1.0) {
-        data[idx] = colRim[0];
-        data[idx + 1] = colRim[1];
-        data[idx + 2] = colRim[2];
-        data[idx + 3] = 255;
-        continue;
-      }
-
-      const nz = Math.sqrt(Math.max(0, 1.0 - r2));
-      const rimFactor = Math.pow(1.0 - nz, 2.0);
-
-      // 1. Gradiente base: Sombra izquierda -> Base centro
-      const shadowFactor = smoothstep(-0.05, -0.65, nx);
-      let rgb = lerpRGB(colBase, colShadow, shadowFactor);
-
-      // 2. Segundo reflejo vertical tenue en el lado contrario (nx = -0.50)
-      const fillDist = Math.abs(nx - (-0.50));
-      const fillHl = Math.exp(-(fillDist * fillDist) / 0.038) * smoothstep(0.08, 0.45, nz);
-      rgb = lerpRGB(rgb, colTrans, fillHl * 0.35);
-
-      // 3. Zona de transición hacia el reflejo
-      const transZone = smoothstep(0.02, 0.26, nx) * (1.0 - smoothstep(0.46, 0.82, nx));
-      rgb = lerpRGB(rgb, colTrans, transZone * 0.55);
-
-      // 4. Reflejo principal: franja vertical amplia, suave, color crema, desplazada (nx = 0.26, ~20-25% ancho)
-      const hlDist = Math.abs(nx - 0.26);
-      const mainHl = Math.exp(-(hlDist * hlDist) / 0.020) * smoothstep(0.06, 0.45, nz);
-      rgb = lerpRGB(rgb, colHl, mainHl * 0.95);
-
-      // 5. Bordes exteriores con dorado tostado #795426
-      rgb = lerpRGB(rgb, colRim, rimFactor * 0.85);
-
-      // 6. Sutil luz cenital difusa de estudio
-      if (ny > 0.0) {
-        rgb = lerpRGB(rgb, colTrans, ny * 0.12 * nz);
-      } else {
-        rgb = lerpRGB(rgb, colShadow, (-ny) * 0.15 * nz);
-      }
-
-      data[idx] = Math.round(rgb[0]);
-      data[idx + 1] = Math.round(rgb[1]);
-      data[idx + 2] = Math.round(rgb[2]);
-      data[idx + 3] = 255;
-    }
-  }
-
-  ctx.putImageData(imgData, 0, 0);
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = maxAnisotropy;
-  texture.needsUpdate = true;
-  return texture;
-}
-
-const atomizerChampagneMatcap = createChampagneMatcapTexture(
-  renderer ? renderer.capabilities.getMaxAnisotropy() : 8
-);
-
-// Material MatCap exclusivo para el atomizador: oro champán pulido con reflejo espejo
-const atomizerMatcapMaterial = new THREE.MeshMatcapMaterial({
-  color: 0xffffff,
-  matcap: atomizerChampagneMatcap,
-});
-
-// Alias para compatibilidad completa en todo el código
-const atomizerMirrorGoldMaterial = atomizerMatcapMaterial;
-const champagneGoldMaterial = atomizerMatcapMaterial;
-const goldNeckMaterial = atomizerMatcapMaterial;
-const goldMaterial = atomizerMatcapMaterial;
-const collarMaterial = atomizerMatcapMaterial;
-const stemMaterial = atomizerMatcapMaterial;
-const buttonMaterial = atomizerMatcapMaterial;
+// Alias para compatibilidad de referencias existentes
+const champagneGoldMaterial = atomizerGoldMaterial;
+const goldNeckMaterial = atomizerGoldMaterial;
+const goldMaterial = atomizerGoldMaterial;
+const collarMaterial = atomizerGoldMaterial;
+const stemMaterial = atomizerGoldMaterial;
+const buttonMaterial = atomizerGoldMaterial;
 
 // 8. Franja de brillo para profundidad visual sobre el frente del cilindro
 const atomizerGoldHighlightMaterial = new THREE.MeshBasicMaterial({
@@ -1940,9 +1825,8 @@ function buildProceduralAtomizer() {
 
   // a) Collar inferior metálico alrededor del cuello
   const ringRadius = 0.0116;
-  const ringGeo = new THREE.CylinderGeometry(ringRadius, ringRadius * 1.025, 0.0024, 64);
-  ringGeo.computeVertexNormals();
-  const ringMesh = new THREE.Mesh(ringGeo, atomizerMirrorGoldMaterial);
+  const ringGeo = new THREE.CylinderGeometry(ringRadius, ringRadius * 1.025, 0.0024, 36);
+  const ringMesh = new THREE.Mesh(ringGeo, champagneGoldMaterial);
   ringMesh.name = 'atomizerRing';
   ringMesh.position.set(0, 0.0306, 0);
   group.add(ringMesh);
@@ -1950,10 +1834,9 @@ function buildProceduralAtomizer() {
   // Vástago cilíndrico intermedio
   const stemRadius = 0.0055;
   const stemHeight = 0.0050;
-  const stemGeo = new THREE.CylinderGeometry(stemRadius, stemRadius, stemHeight, 48);
+  const stemGeo = new THREE.CylinderGeometry(stemRadius, stemRadius, stemHeight, 32);
   stemGeo.translate(0, stemHeight / 2, 0);
-  stemGeo.computeVertexNormals();
-  const stemMesh = new THREE.Mesh(stemGeo, atomizerMirrorGoldMaterial);
+  const stemMesh = new THREE.Mesh(stemGeo, champagneGoldMaterial);
   stemMesh.name = 'atomizerStem';
   stemMesh.position.set(0, 0.0318, 0);
   group.add(stemMesh);
@@ -1966,14 +1849,13 @@ function buildProceduralAtomizer() {
   // b) Cabeza presionable
   const buttonRadius = 0.0076;
   const buttonHeight = 0.0105;
-  const buttonGeo = new THREE.CylinderGeometry(buttonRadius, buttonRadius, buttonHeight, 64);
+  const buttonGeo = new THREE.CylinderGeometry(buttonRadius, buttonRadius, buttonHeight, 36);
   buttonGeo.translate(0, buttonHeight / 2, 0);
-  buttonGeo.computeVertexNormals();
-  const buttonMesh = new THREE.Mesh(buttonGeo, atomizerMirrorGoldMaterial);
+  const buttonMesh = new THREE.Mesh(buttonGeo, atomizerGoldMaterial);
   buttonMesh.name = 'atomizerButton';
   pulsadorGroup.add(buttonMesh);
 
-  // Franja vertical de brillo previa desactivada para permitir reflejos espejo físicos puros
+  // 8. Franja vertical estrecha de reflejo sobre el frente del cilindro central (sutil brillo curvo)
   const highlightRadius = buttonRadius + 0.00008;
   const highlightHeight = buttonHeight * 0.94;
   const highlightGeo = new THREE.CylinderGeometry(
@@ -1989,14 +1871,12 @@ function buildProceduralAtomizer() {
   highlightGeo.translate(0, buttonHeight / 2, 0);
   const highlightMesh = new THREE.Mesh(highlightGeo, atomizerGoldHighlightMaterial);
   highlightMesh.name = 'atomizerGoldHighlight';
-  highlightMesh.visible = false;
   pulsadorGroup.add(highlightMesh);
 
-  // c) Boquilla metálica en la cara frontal (+Z)
-  const nozzleOuterGeo = new THREE.CylinderGeometry(0.0011, 0.0011, 0.0006, 32);
+  // c) Boquilla oscura en la cara frontal (+Z)
+  const nozzleOuterGeo = new THREE.CylinderGeometry(0.0011, 0.0011, 0.0006, 20);
   nozzleOuterGeo.rotateX(Math.PI / 2);
-  nozzleOuterGeo.computeVertexNormals();
-  const nozzleOuterMesh = new THREE.Mesh(nozzleOuterGeo, atomizerMirrorGoldMaterial);
+  const nozzleOuterMesh = new THREE.Mesh(nozzleOuterGeo, nozzleMaterial);
   nozzleOuterMesh.name = 'sprayNozzleOuter';
   nozzleOuterMesh.position.set(0, 0.0072, buttonRadius + 0.0002);
   pulsadorGroup.add(nozzleOuterMesh);
@@ -2010,17 +1890,15 @@ function buildProceduralAtomizer() {
   sprayPinholeMesh.position.set(0, 0.0072, buttonRadius + 0.00025);
   pulsadorGroup.add(sprayPinholeMesh);
 
-  // Asegurar asignación de atomizerMirrorGoldMaterial a las piezas metálicas del atomizador
+  // 3 & 4. Recorrer y asegurar asignación de atomizerGoldMaterial
   group.traverse((child) => {
     if (
       child.isMesh &&
+      child.name !== 'sprayNozzleOuter' &&
       child.name !== 'sprayPinhole' &&
       child.name !== 'atomizerGoldHighlight'
     ) {
-      if (child.geometry) {
-        child.geometry.computeVertexNormals();
-      }
-      child.material = atomizerMirrorGoldMaterial;
+      child.material = atomizerGoldMaterial;
     }
   });
 
@@ -2679,14 +2557,11 @@ loader.load(
     tapaMesh.name = 'tapa';
     tapaMesh.material = capMaterial;
 
-    // Cuello dorado uniforme con acabado espejo oro champán (atomizerMirrorGoldMaterial)
+    // 6 & 7. Cuello dorado uniforme visible desde cualquier ángulo (atomizerGoldMaterial)
     cuelloMesh.name = 'cuello';
-    cuelloMesh.material = atomizerMirrorGoldMaterial;
-    if (cuelloMesh.geometry) {
-      if (cuelloMesh.geometry.getAttribute('color')) {
-        cuelloMesh.geometry.deleteAttribute('color');
-      }
-      cuelloMesh.geometry.computeVertexNormals();
+    cuelloMesh.material = atomizerGoldMaterial;
+    if (cuelloMesh.geometry && cuelloMesh.geometry.getAttribute('color')) {
+      cuelloMesh.geometry.deleteAttribute('color');
     }
 
     if (verticesBodyEl) verticesBodyEl.textContent = `${cuerpoMesh.geometry.attributes.position.count.toLocaleString()} vtx`;
@@ -2701,8 +2576,8 @@ loader.load(
     dipTubeGroup = buildDipTube();
     bottleGroup.add(dipTubeGroup);
 
-    // Aplicar atomizerMirrorGoldMaterial exclusivamente al cuello y piezas metálicas del atomizador
-    [cuelloMesh, atomizerGroup].forEach((target) => {
+    // 6 & 7. Aplicar atomizerGoldMaterial a todas las mallas ubicadas entre cuerpo y tapa
+    [cuelloMesh, atomizerGroup, bottleGroup].forEach((target) => {
       if (!target) return;
       target.traverse((child) => {
         if (!child.isMesh) return;
@@ -2711,6 +2586,7 @@ loader.load(
           child === tapaMesh ||
           child.name === 'cuerpo' ||
           child.name === 'tapa' ||
+          child.name === 'sprayNozzleOuter' ||
           child.name === 'sprayPinhole' ||
           child.name === 'atomizerGoldHighlight' ||
           child.name === 'simulatedCapTopRing' ||
@@ -2724,13 +2600,10 @@ loader.load(
         ) {
           return;
         }
-        if (child.geometry) {
-          if (child.geometry.getAttribute('color')) {
-            child.geometry.deleteAttribute('color');
-          }
-          child.geometry.computeVertexNormals();
+        if (child.geometry && child.geometry.getAttribute('color')) {
+          child.geometry.deleteAttribute('color');
         }
-        child.material = atomizerMirrorGoldMaterial;
+        child.material = atomizerGoldMaterial;
       });
     });
 
