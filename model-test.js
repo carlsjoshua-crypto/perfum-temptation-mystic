@@ -380,6 +380,10 @@ const atomizerChampagneMatcap = createChampagneMatcapTexture(
 const atomizerMatcapMaterial = new THREE.MeshMatcapMaterial({
   color: 0xffffff,
   matcap: atomizerChampagneMatcap,
+  transparent: false,
+  opacity: 1.0,
+  depthTest: true,
+  depthWrite: true,
 });
 
 // Alias para compatibilidad completa en todo el código
@@ -1899,9 +1903,11 @@ function buildDipTube() {
     toneMapped: true,
   });
 
-  // Trayectoria suave: nace bajo atomizador, baja casi vertical, curva suavemente a la derecha tras EAU DE PARFUM y termina a la derecha de YANBAL
+  // Trayectoria suave recortada en el tramo superior:
+  // Comienza dentro del frasco justo debajo del borde interior superior y del cuello metálico,
+  // baja vertical por el centro, pasa detrás del área del nombre, se curva suavemente a la derecha y termina junto a YANBAL.
   const points = [
-    new THREE.Vector3(0.0000, 0.0285, 0.0030),
+    new THREE.Vector3(0.0000, 0.0225, 0.0034),
     new THREE.Vector3(0.0000, 0.0200, 0.0035),
     new THREE.Vector3(0.0003, 0.0100, 0.0040),
     new THREE.Vector3(0.0008, 0.0040, 0.0045),
@@ -2048,12 +2054,10 @@ function buildSimulatedCapHole(targetCapGroup, capMesh) {
   const headRadius = 0.0072;
   const headThickness = 0.0003;
 
-  // 10. Disco dorado superior simulado con atomizerGoldMaterial
+  // Círculo dorado superior de la tapa: reutiliza exactamente la misma instancia del material aprobado del atomizador
   const goldHeadGeo = new THREE.CylinderGeometry(headRadius, headRadius, headThickness, 36);
-  const goldHeadMat = atomizerGoldMaterial.clone();
-  goldHeadMat.transparent = true;
-  goldHeadMat.opacity = 1;
-  simulatedGoldAtomizerHead = new THREE.Mesh(goldHeadGeo, goldHeadMat);
+  goldHeadGeo.computeVertexNormals();
+  simulatedGoldAtomizerHead = new THREE.Mesh(goldHeadGeo, atomizerMatcapMaterial);
   simulatedGoldAtomizerHead.name = 'simulatedGoldAtomizerHead';
   simulatedGoldAtomizerHead.position.set(capCenter.x, capTopY + headThickness / 2 + 0.00015, capCenter.z);
   targetCapGroup.add(simulatedGoldAtomizerHead);
@@ -2871,7 +2875,6 @@ if (uncapBtn) {
         // 4. Estado final cerrado garantizado
         if (simulatedGoldAtomizerHead) {
           simulatedGoldAtomizerHead.visible = true;
-          simulatedGoldAtomizerHead.material.opacity = 1;
         }
         if (simulatedCapTopRing) {
           simulatedCapTopRing.visible = true;
@@ -2904,13 +2907,12 @@ if (uncapBtn) {
       ease: 'power3.inOut',
     }, 0)
 
-    // Desvanecer gradualmente el disco dorado superior falso y su aro (duración 0.20s)
-    .to([simulatedGoldAtomizerHead.material, simulatedCapTopRing.material, simulatedCapTopGroove.material], {
+    // Desvanecer gradualmente el aro y hendidura superior (duración 0.20s)
+    .to([simulatedCapTopRing.material, simulatedCapTopGroove.material], {
       opacity: 0,
       duration: 0.20,
       ease: 'power2.out',
       onComplete: () => {
-        simulatedGoldAtomizerHead.visible = false;
         simulatedCapTopRing.visible = false;
         simulatedCapTopGroove.visible = false;
       },
@@ -3006,14 +3008,9 @@ if (uncapBtn) {
       },
     }, 'capReturn+=0.75')
 
-    // Restaurar progresivamente el disco dorado superior y su aro al asentarse la tapa
-    .set([simulatedGoldAtomizerHead, simulatedCapTopRing, simulatedCapTopGroove], {
+    // Restaurar progresivamente el aro y hendidura superior al asentarse la tapa
+    .set([simulatedCapTopRing, simulatedCapTopGroove], {
       visible: true,
-    }, 'capReturn+=0.80')
-    .to(simulatedGoldAtomizerHead.material, {
-      opacity: 1,
-      duration: 0.25,
-      ease: 'power2.out',
     }, 'capReturn+=0.80')
     .to(simulatedCapTopRing.material, {
       opacity: 1,
@@ -3072,6 +3069,7 @@ const bottleWorldNormal = new THREE.Vector3();
 const bottleWorldQuaternion = new THREE.Quaternion();
 const bottleRightNormal = new THREE.Vector3();
 const bottleLeftNormal = new THREE.Vector3();
+const bottleUpNormal = new THREE.Vector3();
 
 // Loop de animación principal único (sin bucles duplicados)
 function animate() {
@@ -3089,6 +3087,7 @@ function animate() {
     bottleWorldNormal.set(0, 0, 1).applyQuaternion(bottleWorldQuaternion).normalize();
     bottleRightNormal.set(1, 0, 0).applyQuaternion(bottleWorldQuaternion).normalize();
     bottleLeftNormal.set(-1, 0, 0).applyQuaternion(bottleWorldQuaternion).normalize();
+    bottleUpNormal.set(0, 1, 0).applyQuaternion(bottleWorldQuaternion).normalize();
 
     cameraDirection.subVectors(camera.position, bottleWorldPosition).normalize();
 
@@ -3164,9 +3163,12 @@ function animate() {
       if (capLeftPhotoProjection) capLeftPhotoProjection.visible = leftOpacity > 0.01;
     }
 
-    // Manguera interna visible principalmente desde el frente y diagonales frontales
+    // Manguera interna visible principalmente desde el frente y diagonales frontales moderadas
     if (dipTubeGroup && dipTubeMaterial) {
-      const tubeFade = THREE.MathUtils.smoothstep(facing, 0.12, 0.65);
+      const frontFade = THREE.MathUtils.smoothstep(facing, 0.15, 0.65);
+      const topDot = Math.max(0, bottleUpNormal.dot(cameraDirection));
+      const topFade = 1.0 - THREE.MathUtils.smoothstep(topDot, 0.45, 0.82);
+      const tubeFade = frontFade * topFade;
       dipTubeMaterial.opacity = 0.38 * tubeFade;
       dipTubeGroup.visible = tubeFade > 0.01;
     }
