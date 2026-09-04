@@ -202,6 +202,13 @@ let label = null;
 let atomizerAccentLight = null;
 
 // Elementos de la simulación del agujero central de la tapa
+let capRecessGroup = null;
+let capRecessShadowMesh = null;
+let capInsetAtomizerDisk = null;
+let capInsetAtomizerMaterial = null;
+let capBottomRecessMesh = null;
+let capBottomRecessMaterial = null;
+let initialCapY = 0;
 let simulatedGoldAtomizerHead = null;
 let simulatedCapTopRing = null;
 let simulatedCapTopGroove = null;
@@ -2226,89 +2233,141 @@ function buildSimulatedCapHole(targetCapGroup, capMesh) {
   console.log(`Altura total de tapa: ${(capTopY - capBottomY).toFixed(5)} m`);
   console.groupEnd();
 
-  const headRadius = 0.0072;
-  const headThickness = 0.0003;
+  // Simulación del hueco superior de la tapa:
+  // capRecessShadowMesh crea la profundidad oscura.
+  // capInsetAtomizerDisk simula la cara dorada apenas hundida.
+  const recessRadius = 0.00750; // Diámetro exterior de la cavidad (0.0150 m)
+  const diskRadius = 0.00695;   // Diámetro interior del disco dorado (0.0139 m)
+  const recessElevationY = capTopY + 0.00008; // Cota base sobre la superficie de la tapa
+  const diskElevationY = capTopY + 0.00009;   // Cara dorada plana apenas hundida
 
-  // Círculo dorado superior de la tapa: reutiliza exactamente la misma instancia del material aprobado del atomizador
-  const goldHeadGeo = new THREE.CylinderGeometry(headRadius, headRadius, headThickness, 36);
-  goldHeadGeo.computeVertexNormals();
-  simulatedGoldAtomizerHead = new THREE.Mesh(goldHeadGeo, atomizerMatcapMaterial);
-  simulatedGoldAtomizerHead.name = 'simulatedGoldAtomizerHead';
-  simulatedGoldAtomizerHead.position.set(capCenter.x, capTopY + headThickness / 2 + 0.00015, capCenter.z);
-  targetCapGroup.add(simulatedGoldAtomizerHead);
+  capRecessGroup = new THREE.Group();
+  capRecessGroup.name = 'capRecessGroup';
+  targetCapGroup.add(capRecessGroup);
 
-  // Pequeño aro de profundidad oscura alrededor del disco dorado
-  const grooveGeo = new THREE.RingGeometry(headRadius * 0.96, headRadius * 1.05, 36);
-  grooveGeo.rotateX(-Math.PI / 2);
-  const grooveMat = new THREE.MeshBasicMaterial({
-    color: 0x140105,
+  // 1. Cavidad exterior: borde perimetral de sombra oscura mate (sin reflejos metálicos)
+  const recessGeo = new THREE.CircleGeometry(recessRadius, 64);
+  recessGeo.rotateX(-Math.PI / 2);
+  const recessMat = new THREE.MeshBasicMaterial({
+    color: 0x140508, // Borgoña extremadamente oscuro / negro cálido mate
     transparent: true,
-    opacity: 0.9,
+    opacity: 0.95,
     depthWrite: false,
-    side: THREE.DoubleSide,
-  });
-  simulatedCapTopGroove = new THREE.Mesh(grooveGeo, grooveMat);
-  simulatedCapTopGroove.name = 'simulatedCapTopGroove';
-  simulatedCapTopGroove.position.set(capCenter.x, capTopY + 0.0001, capCenter.z);
-  targetCapGroup.add(simulatedCapTopGroove);
-
-  // 10. Aro borgoña
-  const ringRadius = headRadius + 0.0005;
-  const ringTube = 0.00055;
-  const ringGeo = new THREE.TorusGeometry(ringRadius, ringTube, 16, 48);
-  ringGeo.rotateX(Math.PI / 2);
-  const ringMat = new THREE.MeshPhongMaterial({
-    color: 0x650013,
-    emissive: 0x160002,
-    emissiveIntensity: 0.2,
-    specular: 0xb52242,
-    shininess: 38,
-    transparent: true,
-    opacity: 1,
     side: THREE.FrontSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
   });
-  simulatedCapTopRing = new THREE.Mesh(ringGeo, ringMat);
+  capRecessShadowMesh = new THREE.Mesh(recessGeo, recessMat);
+  capRecessShadowMesh.name = 'capRecessShadowMesh';
+  capRecessShadowMesh.position.set(capCenter.x, recessElevationY, capCenter.z);
+  capRecessGroup.add(capRecessShadowMesh);
+
+  // 2. Disco dorado interior: cara circular plana con oro champán aprobado (sin pared lateral)
+  const diskGeo = new THREE.CircleGeometry(diskRadius, 64);
+  diskGeo.rotateX(-Math.PI / 2);
+  capInsetAtomizerMaterial = new THREE.MeshMatcapMaterial({
+    color: 0xffffff,
+    matcap: atomizerChampagneMatcap,
+    transparent: true,
+    opacity: 1.0,
+    depthTest: true,
+    depthWrite: false,
+    side: THREE.FrontSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  });
+  capInsetAtomizerDisk = new THREE.Mesh(diskGeo, capInsetAtomizerMaterial);
+  capInsetAtomizerDisk.name = 'capInsetAtomizerDisk';
+  capInsetAtomizerDisk.position.set(capCenter.x, diskElevationY, capCenter.z);
+  capRecessGroup.add(capInsetAtomizerDisk);
+
+  // Mallas auxiliares dummy para absorber llamadas de animación previas sin alterar la cavidad
+  const dummyMatRing = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, visible: false });
+  const dummyMatGroove = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, visible: false });
+  const dummyGeo = new THREE.BufferGeometry();
+  simulatedCapTopRing = new THREE.Mesh(dummyGeo, dummyMatRing);
   simulatedCapTopRing.name = 'simulatedCapTopRing';
-  simulatedCapTopRing.position.set(capCenter.x, capTopY + 0.00012, capCenter.z);
+  simulatedCapTopRing.visible = false;
   targetCapGroup.add(simulatedCapTopRing);
 
-  // 10. Cavidad inferior (MeshPhongMaterial negro profundo hacia abajo)
-  const cavityRadius = 0.0082;
-  const cavityDepth = 0.0085;
-  const cavityGeo = new THREE.CylinderGeometry(cavityRadius, cavityRadius, cavityDepth, 32, 1, false);
-  cavityGeo.translate(0, cavityDepth / 2, 0);
-  const cavityMat = new THREE.MeshPhongMaterial({
-    color: 0x090002,
-    emissive: 0x120003,
-    emissiveIntensity: 0.12,
-    specular: 0x4d0715,
-    shininess: 18,
-    side: THREE.BackSide,
+  simulatedCapTopGroove = new THREE.Mesh(dummyGeo, dummyMatGroove);
+  simulatedCapTopGroove.name = 'simulatedCapTopGroove';
+  simulatedCapTopGroove.visible = false;
+  targetCapGroup.add(simulatedCapTopGroove);
+
+  simulatedGoldAtomizerHead = capInsetAtomizerDisk;
+
+  // Simulación independiente del hueco visto desde la cara inferior
+  // de la tapa cuando esta se encuentra levantada.
+  function createCapBottomRecessTexture() {
+    const size = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const cx = size / 2;
+    const cy = size / 2;
+    const r = size / 2;
+
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    // 1. Centro oscuro profundo (vacío de la cavidad):
+    grad.addColorStop(0.00, 'rgba(10, 2, 4, 1.0)');
+    grad.addColorStop(0.55, 'rgba(16, 3, 6, 1.0)');
+    // 2. Transición hacia la pared cilíndrica interior (sombra sutil):
+    grad.addColorStop(0.78, 'rgba(28, 5, 11, 0.98)');
+    // 3. Borde interior sutil antes del bisel:
+    grad.addColorStop(0.88, 'rgba(44, 7, 16, 0.95)');
+    // 4. Borde perimetral con transición suave hacia la superficie roja de la tapa:
+    grad.addColorStop(0.96, 'rgba(65, 10, 22, 0.65)');
+    grad.addColorStop(1.00, 'rgba(65, 10, 22, 0.0)');
+
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    return texture;
+  }
+
+  // Variables que controlan tamaño, posición y profundidad aparente del hueco inferior:
+  const bottomRecessRadius = 0.0086; // Diámetro de cavidad: 0.0172 m (ligeramente mayor que la cabeza del atomizador de 0.0166 m)
+  const bottomRecessElevationY = capBottomY - 0.00008; // Cota apenas por debajo de la superficie inferior (evita z-fighting)
+
+  const bottomRecessGeo = new THREE.CircleGeometry(bottomRecessRadius, 64);
+  bottomRecessGeo.rotateX(Math.PI / 2); // Orientación normal hacia abajo (-Y)
+  bottomRecessGeo.computeVertexNormals();
+
+  const bottomRecessTexture = createCapBottomRecessTexture();
+  capBottomRecessMaterial = new THREE.MeshBasicMaterial({
+    map: bottomRecessTexture,
     transparent: true,
     opacity: 0,
+    depthWrite: false,
+    side: THREE.FrontSide, // Solo visible desde abajo; culleada desde arriba
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
   });
-  simulatedCapUndersideCavity = new THREE.Mesh(cavityGeo, cavityMat);
+
+  capBottomRecessMesh = new THREE.Mesh(bottomRecessGeo, capBottomRecessMaterial);
+  capBottomRecessMesh.name = 'capBottomRecessMesh';
+  capBottomRecessMesh.position.set(capCenter.x, bottomRecessElevationY, capCenter.z);
+  capBottomRecessMesh.visible = false;
+  targetCapGroup.add(capBottomRecessMesh);
+
+  // Mallas auxiliares dummy para absorber llamadas de animación previas sin alterar la escena
+  const dummyMatUnder = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, visible: false });
+  simulatedCapUndersideCavity = new THREE.Mesh(dummyGeo, dummyMatUnder);
   simulatedCapUndersideCavity.name = 'simulatedCapUndersideCavity';
-  simulatedCapUndersideCavity.position.set(capCenter.x, capBottomY + 0.00005, capCenter.z);
   simulatedCapUndersideCavity.visible = false;
   targetCapGroup.add(simulatedCapUndersideCavity);
 
-  // Aro interior rojo oscuro para dar sensación de espesor de pared en la base de la tapa
-  const undersideRingGeo = new THREE.RingGeometry(cavityRadius * 0.98, cavityRadius * 1.15, 32);
-  undersideRingGeo.rotateX(Math.PI / 2);
-  const undersideRingMat = new THREE.MeshPhongMaterial({
-    color: 0x3d020d,
-    emissive: 0x100002,
-    emissiveIntensity: 0.15,
-    specular: 0x6e1022,
-    shininess: 30,
-    side: THREE.DoubleSide,
-    transparent: true,
-    opacity: 0,
-  });
-  simulatedCapUndersideRing = new THREE.Mesh(undersideRingGeo, undersideRingMat);
+  simulatedCapUndersideRing = new THREE.Mesh(dummyGeo, dummyMatUnder.clone());
   simulatedCapUndersideRing.name = 'simulatedCapUndersideRing';
-  simulatedCapUndersideRing.position.set(capCenter.x, capBottomY + 0.00008, capCenter.z);
   simulatedCapUndersideRing.visible = false;
   targetCapGroup.add(simulatedCapUndersideRing);
 }
@@ -2802,6 +2861,7 @@ loader.load(
     capGroup.name = 'capGroup';
     bottleGroup.add(capGroup);
     capGroup.attach(tapaMesh);
+    initialCapY = capGroup.position.y;
 
     bottleGroup.attach(cuelloMesh);
 
@@ -3046,7 +3106,7 @@ if (uncapBtn) {
     uncapBtn.disabled = true;
     capMultiviewUniforms.uCapCleanMix.value = 0.0;
 
-    const initialCapY = capGroup.position.y;
+    initialCapY = capGroup.position.y;
     const initialPulsadorY = pulsadorGroup.position.y;
 
     const tl = gsap.timeline({
@@ -3058,17 +3118,24 @@ if (uncapBtn) {
         if (sprayPoints) sprayPoints.visible = false;
         if (screenMistOverlay) screenMistOverlay.style.opacity = '0';
 
-        // 4. Estado final cerrado garantizado
-        if (simulatedGoldAtomizerHead) {
-          simulatedGoldAtomizerHead.visible = true;
+        // 4. Estado final cerrado garantizado: cavidad y disco dorado visibles
+        if (capInsetAtomizerDisk && capInsetAtomizerMaterial) {
+          capInsetAtomizerMaterial.opacity = 1.0;
+          capInsetAtomizerDisk.visible = true;
+        }
+        if (capRecessShadowMesh) {
+          capRecessShadowMesh.visible = true;
+          capRecessShadowMesh.material.opacity = 0.95;
+        }
+        if (capBottomRecessMesh && capBottomRecessMaterial) {
+          capBottomRecessMaterial.opacity = 0;
+          capBottomRecessMesh.visible = false;
         }
         if (simulatedCapTopRing) {
-          simulatedCapTopRing.visible = true;
-          simulatedCapTopRing.material.opacity = 1;
+          simulatedCapTopRing.visible = false;
         }
         if (simulatedCapTopGroove) {
-          simulatedCapTopGroove.visible = true;
-          simulatedCapTopGroove.material.opacity = 0.9;
+          simulatedCapTopGroove.visible = false;
         }
         if (simulatedCapUndersideCavity) {
           simulatedCapUndersideCavity.visible = false;
@@ -3264,6 +3331,42 @@ function animate() {
   // Actualizar partículas activas durante el spray
   if (sprayState.active) {
     updateParticles(sprayState.progress);
+  }
+
+  // La cavidad permanece visible; el disco dorado simulado
+  // se desvanece según el progreso real de apertura de la tapa.
+  if (capGroup && capInsetAtomizerDisk && capInsetAtomizerMaterial) {
+    const capElevation = Math.max(0, capGroup.position.y - initialCapY);
+    const capLiftHeight = 0.048;
+    const capOpenProgress = THREE.MathUtils.clamp(capElevation / capLiftHeight, 0, 1);
+    const fadeStart = 0.02;
+    const fadeEnd = 0.18;
+    const goldDiskOpacity = 1.0 - THREE.MathUtils.smoothstep(capOpenProgress, fadeStart, fadeEnd);
+    capInsetAtomizerMaterial.opacity = goldDiskOpacity;
+    capInsetAtomizerDisk.visible = goldDiskOpacity > 0.001;
+  }
+
+  // Simulación independiente del hueco visto desde la cara inferior
+  // de la tapa cuando esta se encuentra levantada.
+  if (capGroup && capBottomRecessMesh && capBottomRecessMaterial) {
+    const capElevation = Math.max(0, capGroup.position.y - initialCapY);
+    const capLiftHeight = 0.048;
+    const capOpenProgress = THREE.MathUtils.clamp(capElevation / capLiftHeight, 0, 1);
+    const bottomFadeStart = 0.04;
+    const bottomFadeEnd = 0.22;
+    const bottomRecessOpacity = THREE.MathUtils.smoothstep(capOpenProgress, bottomFadeStart, bottomFadeEnd);
+
+    // Control según el lado de la cámara: visible únicamente con línea visual hacia la cara inferior
+    const bottomWorldPos = new THREE.Vector3();
+    capBottomRecessMesh.getWorldPosition(bottomWorldPos);
+    const dirToCam = camera.position.clone().sub(bottomWorldPos).normalize();
+    const capWorldQuat = new THREE.Quaternion();
+    capGroup.getWorldQuaternion(capWorldQuat);
+    const worldDown = new THREE.Vector3(0, -1, 0).applyQuaternion(capWorldQuat);
+    const isCameraBelow = worldDown.dot(dirToCam) > 0.02;
+
+    capBottomRecessMaterial.opacity = isCameraBelow ? bottomRecessOpacity : 0;
+    capBottomRecessMesh.visible = isCameraBelow && bottomRecessOpacity > 0.001;
   }
 
   // 8 y 9. Transición frontal, posterior y lateral con normales del modelo
