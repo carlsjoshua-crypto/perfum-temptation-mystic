@@ -212,6 +212,10 @@ let simulatedCapUndersideRing = null;
 let dipTubeGroup = null;
 let dipTubeMaterial = null;
 
+// Conector transparente escalonado entre collar y manguera
+let dipTubeConnectorGroup = null;
+let dipTubeConnectorMaterial = null;
+
 // ==========================================================================
 // PASO 1, 2, 13 y 14: Materiales
 // ==========================================================================
@@ -1890,13 +1894,17 @@ function buildDipTube() {
   const group = new THREE.Group();
   group.name = 'dipTubeGroup';
 
+  // Material de la manguera: gris cálido translúcido según referencias reales
+  // Rugosidad y reflectividad calibradas para difuminar reflejos especulares y evitar destellos bruscos
   dipTubeMaterial = new THREE.MeshPhysicalMaterial({
-    color: 0x3a000b,
+    color: 0x8a8580,
     metalness: 0,
-    roughness: 0.42,
+    roughness: 0.88,
+    reflectivity: 0.2,
+    clearcoat: 0.0,
     transparent: true,
     opacity: 0.38,
-    transmission: 0,
+    transmission: 0.0,
     depthWrite: false,
     depthTest: false,
     side: THREE.FrontSide,
@@ -1904,10 +1912,10 @@ function buildDipTube() {
   });
 
   // Trayectoria suave recortada en el tramo superior:
-  // Comienza dentro del frasco justo debajo del borde interior superior y del cuello metálico,
+  // Comienza dentro del frasco justo debajo del conector transparente,
   // baja vertical por el centro, pasa detrás del área del nombre, se curva suavemente a la derecha y termina junto a YANBAL.
   const points = [
-    new THREE.Vector3(0.0000, 0.0225, 0.0034),
+    new THREE.Vector3(0.0000, 0.0242, 0.0034),
     new THREE.Vector3(0.0000, 0.0200, 0.0035),
     new THREE.Vector3(0.0003, 0.0100, 0.0040),
     new THREE.Vector3(0.0008, 0.0040, 0.0045),
@@ -1920,14 +1928,14 @@ function buildDipTube() {
   ];
 
   const curve = new THREE.CatmullRomCurve3(points);
-  const tubeGeo = new THREE.TubeGeometry(curve, 64, 0.00065, 12, false);
+  const tubeGeo = new THREE.TubeGeometry(curve, 64, 0.00055, 12, false);
   const tubeMesh = new THREE.Mesh(tubeGeo, dipTubeMaterial);
   tubeMesh.name = 'dipTubeMesh';
   tubeMesh.renderOrder = 2;
   group.add(tubeMesh);
 
   // Extremo inferior ligeramente redondeado
-  const endCapGeo = new THREE.SphereGeometry(0.00065, 12, 12);
+  const endCapGeo = new THREE.SphereGeometry(0.00055, 12, 12);
   const endCapMesh = new THREE.Mesh(endCapGeo, dipTubeMaterial);
   endCapMesh.name = 'dipTubeEndCap';
   endCapMesh.position.copy(points[points.length - 1]);
@@ -1938,11 +1946,62 @@ function buildDipTube() {
 }
 
 // ==========================================================================
+// Conector Transparente Escalonado (entre collar metálico y manguera)
+// ==========================================================================
+function buildDipTubeConnector() {
+  const group = new THREE.Group();
+  group.name = 'dipTubeConnectorGroup';
+
+  // Material físico transparente: plástico cristalino grisáceo estable
+  // Mantiene constantes color, roughness, metalness, transmission y clearcoat para eliminar glitches
+  dipTubeConnectorMaterial = new THREE.MeshPhysicalMaterial({
+    color: 0xc8c5bd,
+    transparent: true,
+    opacity: 0.38,
+    transmission: 0.0,
+    roughness: 0.45,
+    metalness: 0,
+    clearcoat: 0.0,
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: true,
+  });
+
+  // Conector de 3 niveles escalonados mediante geometría continua de revolución:
+  // Límite inferior del collar metálico: Y = 0.0294.
+  // Nivel 1 (superior): radio 0.0026, de Y=0.02935 a Y=0.02775 (comienza justo debajo del anillo)
+  // Nivel 2 (intermedio): radio 0.0019, de Y=0.02775 a Y=0.02595
+  // Nivel 3 (inferior cónico): de radio 0.0014 a 0.00075, de Y=0.02595 a Y=0.02375
+  const profilePoints = [
+    new THREE.Vector2(0.00075, 0.02375), // Extremo inferior (abertura de unión donde entra la manguera)
+    new THREE.Vector2(0.00140, 0.02595), // Cima nivel 3 cónico
+    new THREE.Vector2(0.00190, 0.02595), // Escalón horizontal hacia nivel 2
+    new THREE.Vector2(0.00190, 0.02775), // Cima nivel 2
+    new THREE.Vector2(0.00260, 0.02775), // Escalón horizontal hacia nivel 1
+    new THREE.Vector2(0.00260, 0.02935), // Cima nivel 1 (límite inferior real del collar metálico)
+    new THREE.Vector2(0.00000, 0.02935), // Tapa superior sellada debajo del collar
+  ];
+
+  const connectorGeo = new THREE.LatheGeometry(profilePoints, 32);
+  connectorGeo.computeVertexNormals();
+
+  const connectorMesh = new THREE.Mesh(connectorGeo, dipTubeConnectorMaterial);
+  connectorMesh.name = 'connectorLevel1';
+  connectorMesh.position.set(0, 0, 0.0034);
+  connectorMesh.renderOrder = 2;
+  group.add(connectorMesh);
+
+  return group;
+}
+
+// ==========================================================================
 // 5. Construcción Procedimental del Atomizador (atomizerGroup)
 // ==========================================================================
 function buildProceduralAtomizer() {
   const group = new THREE.Group();
   group.name = 'atomizerGroup';
+  group.renderOrder = 4;
 
   // a) Collar inferior metálico alrededor del cuello
   const ringRadius = 0.0116;
@@ -1951,6 +2010,7 @@ function buildProceduralAtomizer() {
   const ringMesh = new THREE.Mesh(ringGeo, atomizerMirrorGoldMaterial);
   ringMesh.name = 'atomizerRing';
   ringMesh.position.set(0, 0.0306, 0);
+  ringMesh.renderOrder = 4;
   group.add(ringMesh);
 
   // Vástago cilíndrico intermedio
@@ -1962,12 +2022,14 @@ function buildProceduralAtomizer() {
   const stemMesh = new THREE.Mesh(stemGeo, atomizerMirrorGoldMaterial);
   stemMesh.name = 'atomizerStem';
   stemMesh.position.set(0, 0.0318, 0);
+  stemMesh.renderOrder = 4;
   group.add(stemMesh);
 
   // Grupo del pulsador móvil (cabeza presionable)
   pulsadorGroup = new THREE.Group();
   pulsadorGroup.name = 'pulsadorGroup';
   pulsadorGroup.position.set(0, 0.0430, 0);
+  pulsadorGroup.renderOrder = 4;
 
   // b) Cabeza presionable
   const buttonRadius = 0.0076;
@@ -1977,6 +2039,7 @@ function buildProceduralAtomizer() {
   buttonGeo.computeVertexNormals();
   const buttonMesh = new THREE.Mesh(buttonGeo, atomizerMirrorGoldMaterial);
   buttonMesh.name = 'atomizerButton';
+  buttonMesh.renderOrder = 4;
   pulsadorGroup.add(buttonMesh);
 
   // Franja vertical de brillo previa desactivada para permitir reflejos espejo físicos puros
@@ -2005,6 +2068,7 @@ function buildProceduralAtomizer() {
   const nozzleOuterMesh = new THREE.Mesh(nozzleOuterGeo, atomizerMirrorGoldMaterial);
   nozzleOuterMesh.name = 'sprayNozzleOuter';
   nozzleOuterMesh.position.set(0, 0.0072, buttonRadius + 0.0002);
+  nozzleOuterMesh.renderOrder = 4;
   pulsadorGroup.add(nozzleOuterMesh);
 
   // Orificio oscuro central de spray (origen de las partículas)
@@ -2014,6 +2078,7 @@ function buildProceduralAtomizer() {
   sprayPinholeMesh = new THREE.Mesh(pinholeGeo, pinholeMat);
   sprayPinholeMesh.name = 'sprayPinhole';
   sprayPinholeMesh.position.set(0, 0.0072, buttonRadius + 0.00025);
+  sprayPinholeMesh.renderOrder = 4;
   pulsadorGroup.add(sprayPinholeMesh);
 
   // Asegurar asignación de atomizerMirrorGoldMaterial a las piezas metálicas del atomizador
@@ -2027,6 +2092,7 @@ function buildProceduralAtomizer() {
         child.geometry.computeVertexNormals();
       }
       child.material = atomizerMirrorGoldMaterial;
+      child.renderOrder = 4;
     }
   });
 
@@ -2686,6 +2752,7 @@ loader.load(
     // Cuello dorado uniforme con acabado espejo oro champán (atomizerMirrorGoldMaterial)
     cuelloMesh.name = 'cuello';
     cuelloMesh.material = atomizerMirrorGoldMaterial;
+    cuelloMesh.renderOrder = 4;
     if (cuelloMesh.geometry) {
       if (cuelloMesh.geometry.getAttribute('color')) {
         cuelloMesh.geometry.deleteAttribute('color');
@@ -2704,6 +2771,10 @@ loader.load(
     // Manguera interna procedural visible sutilmente a través del vidrio
     dipTubeGroup = buildDipTube();
     bottleGroup.add(dipTubeGroup);
+
+    // Conector transparente escalonado entre collar y manguera
+    dipTubeConnectorGroup = buildDipTubeConnector();
+    bottleGroup.add(dipTubeConnectorGroup);
 
     // Aplicar atomizerMirrorGoldMaterial exclusivamente al cuello y piezas metálicas del atomizador
     [cuelloMesh, atomizerGroup].forEach((target) => {
@@ -2724,7 +2795,10 @@ loader.load(
           child.name.includes('PhotoProjection') ||
           child.name === 'labelMesh' ||
           child.name === 'dipTubeMesh' ||
-          child.name === 'dipTubeEndCap'
+          child.name === 'dipTubeEndCap' ||
+          child.name === 'connectorLevel1' ||
+          child.name === 'connectorLevel2' ||
+          child.name === 'connectorLevel3'
         ) {
           return;
         }
@@ -3163,14 +3237,37 @@ function animate() {
       if (capLeftPhotoProjection) capLeftPhotoProjection.visible = leftOpacity > 0.01;
     }
 
-    // Manguera interna visible principalmente desde el frente y diagonales frontales moderadas
+    // Manguera interna: visibilidad independiente que permanece visible dentro del cuerpo
     if (dipTubeGroup && dipTubeMaterial) {
-      const frontFade = THREE.MathUtils.smoothstep(facing, 0.15, 0.65);
-      const topDot = Math.max(0, bottleUpNormal.dot(cameraDirection));
-      const topFade = 1.0 - THREE.MathUtils.smoothstep(topDot, 0.45, 0.82);
-      const tubeFade = frontFade * topFade;
-      dipTubeMaterial.opacity = 0.38 * tubeFade;
-      dipTubeGroup.visible = tubeFade > 0.01;
+      const hoseFacingFade = THREE.MathUtils.smoothstep(facing, 0.15, 0.65);
+      const hoseUpDot = Math.max(0, bottleUpNormal.dot(cameraDirection));
+      const hoseUpFade = 1.0 - THREE.MathUtils.smoothstep(hoseUpDot, 0.55, 0.88);
+      const hoseVisibility = THREE.MathUtils.clamp(hoseFacingFade * hoseUpFade, 0, 1);
+      dipTubeMaterial.opacity = 0.38 * hoseVisibility;
+      dipTubeGroup.visible = hoseVisibility > 0.001;
+    }
+
+    // Conector transparente escalonado: visibilidad angular independiente y control superior
+    if (dipTubeConnectorGroup && dipTubeConnectorMaterial) {
+      // 1. Desvanecimiento suave frontal a lateral/posterior: visible de frente y diagonales moderadas,
+      // invisible hacia laterales y posterior para no duplicar ni alterar la foto posterior
+      const connectorFacingFade = THREE.MathUtils.smoothstep(facing, 0.20, 0.65);
+
+      // 2. Control angular superior: al elevar la cámara hacia diagonales pronunciadas o vista superior,
+      // la opacidad disminuye suavemente hasta quedar invisible antes de que pueda verse sobre el anillo
+      const connectorUpDot = Math.max(0, bottleUpNormal.dot(cameraDirection));
+      const connectorElevationFade = 1.0 - THREE.MathUtils.smoothstep(connectorUpDot, 0.04, 0.32);
+
+      // 3. Factor único continuo suavizado y normalizado
+      const connectorVisibility = THREE.MathUtils.clamp(
+        connectorFacingFade * connectorElevationFade,
+        0,
+        1
+      );
+
+      const connectorBaseOpacity = 0.38;
+      dipTubeConnectorMaterial.opacity = connectorBaseOpacity * connectorVisibility;
+      dipTubeConnectorGroup.visible = connectorVisibility > 0.001;
     }
   }
 
