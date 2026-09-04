@@ -15,5 +15,9 @@
     "luxury"
   ],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "gsap": "^3.15.0",
+    "three": "^0.185.1"
+  }
 }
