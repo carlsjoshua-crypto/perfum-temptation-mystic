@@ -134,6 +134,9 @@ const capMultiviewUniforms = {
   uTexLeft: { value: null },
   uCapLocalBoxMin: { value: new THREE.Vector3() },
   uCapLocalBoxSize: { value: new THREE.Vector3(1, 1, 1) },
+  uCapLocalCenter: { value: new THREE.Vector3() },
+  uHoleRadius: { value: 0.00750 },
+  uDiskRadius: { value: 0.00695 },
   uBaseRuby: { value: new THREE.Color(0x760019) },
   uCapParallaxShiftFront: { value: 0.0 },
   uCapParallaxShiftBack: { value: 0.0 },
@@ -1407,6 +1410,13 @@ function tryInitCapMultiviewShader(tMesh, tBox, lBox, lSize) {
     savedTapaLocalSize.y,
     savedTapaLocalSize.z
   );
+  capMultiviewUniforms.uCapLocalCenter.value.set(
+    savedTapaLocalCenter.x,
+    savedTapaLocalCenter.y,
+    savedTapaLocalCenter.z
+  );
+  capMultiviewUniforms.uHoleRadius.value = 0.00750;
+  capMultiviewUniforms.uDiskRadius.value = 0.00695;
 
   try {
     if (!capMultiviewMaterial) {
@@ -1439,6 +1449,9 @@ function tryInitCapMultiviewShader(tMesh, tBox, lBox, lSize) {
         shader.uniforms.uCapCleanMix = capMultiviewUniforms.uCapCleanMix;
         shader.uniforms.uCapLocalBoxMin = capMultiviewUniforms.uCapLocalBoxMin;
         shader.uniforms.uCapLocalBoxSize = capMultiviewUniforms.uCapLocalBoxSize;
+        shader.uniforms.uCapLocalCenter = capMultiviewUniforms.uCapLocalCenter;
+        shader.uniforms.uHoleRadius = capMultiviewUniforms.uHoleRadius;
+        shader.uniforms.uDiskRadius = capMultiviewUniforms.uDiskRadius;
         shader.uniforms.uBaseRuby = capMultiviewUniforms.uBaseRuby;
         shader.uniforms.uCapParallaxShiftFront = capMultiviewUniforms.uCapParallaxShiftFront;
         shader.uniforms.uCapParallaxShiftBack = capMultiviewUniforms.uCapParallaxShiftBack;
@@ -1481,6 +1494,9 @@ uniform sampler2D uTexLeft;
 uniform float uCapCleanMix;
 uniform vec3 uCapLocalBoxMin;
 uniform vec3 uCapLocalBoxSize;
+uniform vec3 uCapLocalCenter;
+uniform float uHoleRadius;
+uniform float uDiskRadius;
 uniform vec3 uBaseRuby;
 uniform float uCapParallaxShiftFront;
 uniform float uCapParallaxShiftBack;
@@ -1511,10 +1527,24 @@ vec2 uvFront = vec2(
 // Fondo cristal limpio exterior frontal completamente fijo
 vec4 colBgFront = sampleCapPhoto(uCapCleanFront, uvFront);
 
-// Centro móvil y compresión por perspectiva respecto al centro móvil
-float movingCenterXFront = 0.5 + uCapParallaxShiftFront;
-float widthScaleFront = mix(1.0, 0.36, uCapLateralProgressFront);
-float compressedXFront = 0.5 + (uvFront.x - movingCenterXFront) / max(widthScaleFront, 0.05);
+// Centro móvil anclado al eje proyectado del atomizador con gradiente vertical de refracción óptica
+float anchorYFront = mix(1.0, 0.82, smoothstep(0.06, 0.85, uvFront.y));
+float movingCenterXFront = 0.5 + uCapParallaxShiftFront * anchorYFront;
+
+float deltaFront = uvFront.x - movingCenterXFront;
+float shiftDirFront = sign(uCapParallaxShiftFront);
+float shiftMagnitudeFront = abs(uCapParallaxShiftFront);
+float shiftProgFront = clamp(shiftMagnitudeFront / 0.24, 0.0, 1.0);
+
+// Deformación asimétrica:
+// Estira suavemente el lado orientado hacia el atomizador y comprime el lado contrario
+float compressScaleFront = mix(1.0, 0.38, shiftProgFront);
+float stretchScaleFront  = mix(1.0, 1.35, shiftProgFront);
+
+float sideFactorFront = smoothstep(-0.04, 0.04, deltaFront * shiftDirFront);
+float localWidthScaleFront = mix(stretchScaleFront, compressScaleFront, sideFactorFront);
+
+float compressedXFront = 0.5 + deltaFront / max(localWidthScaleFront, 0.05);
 vec2 uvFrontMoving = vec2(compressedXFront, uvFront.y);
 
 // Muestreo con coordenadas móviles conjuntas
@@ -1526,25 +1556,24 @@ float diffFront = length(origFrontMoving.rgb - cleanFrontMoving.rgb);
 float diffMaskFront = smoothstep(0.065, 0.19, diffFront);
 
 // Máscara espacial limitada estrictamente al corredor interior del mecanismo
-float spatialMaskXFront = 1.0 - smoothstep(0.12, 0.175, abs(uvFrontMoving.x - 0.5));
+float spatialMaskXFront = 1.0 - smoothstep(0.13, 0.185, abs(uvFrontMoving.x - 0.5));
 float spatialMaskYFront = smoothstep(0.04, 0.11, uvFrontMoving.y) * (1.0 - smoothstep(0.85, 0.94, uvFrontMoving.y));
 float spatialFront = spatialMaskXFront * spatialMaskYFront;
 
-// Coordinación de oclusión angular y oclusión de borde por espesor del cristal
-float edgeDistFront = abs(movingCenterXFront - 0.5);
-float occAngularFront = 1.0 - smoothstep(0.40, 0.85, uCapLateralProgressFront);
-float occEdgeFront = 1.0 - smoothstep(0.12, 0.195, edgeDistFront);
-float occOpacityFront = occAngularFront * occEdgeFront * (1.0 - clamp(uCapCleanMix, 0.0, 1.0));
+// Coordinación de oclusión angular y oclusión de borde por espesor del cristal (desaparece antes del bisel)
+float occEdgeFront = 1.0 - smoothstep(0.18, 0.29, shiftMagnitudeFront);
+float occAngularFront = 1.0 - smoothstep(0.55, 0.88, uCapLateralProgressFront);
+float occOpacityFront = occEdgeFront * occAngularFront * (1.0 - clamp(uCapCleanMix, 0.0, 1.0));
 
 float mechMaskFront = diffMaskFront * spatialFront * occOpacityFront;
 
 // Oscurecimiento y tinte rubí al aproximarse a los laterales
 float tintFactorFront = clamp(
-  smoothstep(0.10, 0.80, uCapLateralProgressFront) * 0.70 +
-  smoothstep(0.08, 0.18, edgeDistFront) * 0.30,
+  smoothstep(0.08, 0.25, shiftMagnitudeFront) * 0.65 +
+  smoothstep(0.15, 0.75, uCapLateralProgressFront) * 0.35,
   0.0, 1.0
 );
-vec3 mechColorFront = origFrontMoving.rgb * mix(1.0, 0.45, tintFactorFront);
+vec3 mechColorFront = origFrontMoving.rgb * mix(1.0, 0.40, tintFactorFront);
 mechColorFront = mix(mechColorFront, uBaseRuby * 1.15, tintFactorFront * 0.65);
 
 // Composición frontal: fondo limpio fijo + única silueta móvil
@@ -1563,10 +1592,22 @@ vec2 uvBack = vec2(
 // Fondo cristal limpio exterior posterior completamente fijo
 vec4 colBgBack = sampleCapPhoto(uCapCleanBack, uvBack);
 
-// Centro móvil y compresión posterior
-float movingCenterXBack = 0.5 + uCapParallaxShiftBack;
-float widthScaleBack = mix(1.0, 0.36, uCapLateralProgressBack);
-float compressedXBack = 0.5 + (uvBack.x - movingCenterXBack) / max(widthScaleBack, 0.05);
+// Centro móvil posterior anclado al eje proyectado del atomizador
+float anchorYBack = mix(1.0, 0.82, smoothstep(0.06, 0.85, uvBack.y));
+float movingCenterXBack = 0.5 + uCapParallaxShiftBack * anchorYBack;
+
+float deltaBack = uvBack.x - movingCenterXBack;
+float shiftDirBack = sign(uCapParallaxShiftBack);
+float shiftMagnitudeBack = abs(uCapParallaxShiftBack);
+float shiftProgBack = clamp(shiftMagnitudeBack / 0.24, 0.0, 1.0);
+
+float compressScaleBack = mix(1.0, 0.38, shiftProgBack);
+float stretchScaleBack  = mix(1.0, 1.35, shiftProgBack);
+
+float sideFactorBack = smoothstep(-0.04, 0.04, deltaBack * shiftDirBack);
+float localWidthScaleBack = mix(stretchScaleBack, compressScaleBack, sideFactorBack);
+
+float compressedXBack = 0.5 + deltaBack / max(localWidthScaleBack, 0.05);
 vec2 uvBackMoving = vec2(compressedXBack, uvBack.y);
 
 // Muestreo con coordenadas móviles conjuntas
@@ -1578,25 +1619,24 @@ float diffBack = length(origBackMoving.rgb - cleanBackMoving.rgb);
 float diffMaskBack = smoothstep(0.065, 0.19, diffBack);
 
 // Máscara espacial interior posterior
-float spatialMaskXBack = 1.0 - smoothstep(0.12, 0.175, abs(uvBackMoving.x - 0.5));
+float spatialMaskXBack = 1.0 - smoothstep(0.13, 0.185, abs(uvBackMoving.x - 0.5));
 float spatialMaskYBack = smoothstep(0.04, 0.11, uvBackMoving.y) * (1.0 - smoothstep(0.85, 0.94, uvBackMoving.y));
 float spatialBack = spatialMaskXBack * spatialMaskYBack;
 
 // Coordinación de oclusión angular y oclusión de borde posterior
-float edgeDistBack = abs(movingCenterXBack - 0.5);
-float occAngularBack = 1.0 - smoothstep(0.40, 0.85, uCapLateralProgressBack);
-float occEdgeBack = 1.0 - smoothstep(0.12, 0.195, edgeDistBack);
-float occOpacityBack = occAngularBack * occEdgeBack * (1.0 - clamp(uCapCleanMix, 0.0, 1.0));
+float occEdgeBack = 1.0 - smoothstep(0.18, 0.29, shiftMagnitudeBack);
+float occAngularBack = 1.0 - smoothstep(0.55, 0.88, uCapLateralProgressBack);
+float occOpacityBack = occEdgeBack * occAngularBack * (1.0 - clamp(uCapCleanMix, 0.0, 1.0));
 
 float mechMaskBack = diffMaskBack * spatialBack * occOpacityBack;
 
 // Oscurecimiento y tinte rubí posterior
 float tintFactorBack = clamp(
-  smoothstep(0.10, 0.80, uCapLateralProgressBack) * 0.70 +
-  smoothstep(0.08, 0.18, edgeDistBack) * 0.30,
+  smoothstep(0.08, 0.25, shiftMagnitudeBack) * 0.65 +
+  smoothstep(0.15, 0.75, uCapLateralProgressBack) * 0.35,
   0.0, 1.0
 );
-vec3 mechColorBack = origBackMoving.rgb * mix(1.0, 0.45, tintFactorBack);
+vec3 mechColorBack = origBackMoving.rgb * mix(1.0, 0.40, tintFactorBack);
 mechColorBack = mix(mechColorBack, uBaseRuby * 1.15, tintFactorBack * 0.65);
 
 // Composición posterior: fondo limpio fijo + única silueta móvil
@@ -1673,9 +1713,13 @@ vec3 blendedPhoto = cFront * weights.x +
                     cRight * weights.z +
                     cLeft  * weights.w;
 
-// Suavizado en superficie superior (n.y > 0) y superficie inferior (n.y < 0)
+// -------------------------------------------------------------
+// 6. Superficie Superior e Inferior: Transición Suave con Rubí Base
+// -------------------------------------------------------------
 float horizFactor = smoothstep(0.92, 0.65, abs(n.y));
-diffuseColor.rgb = mix(uBaseRuby, blendedPhoto, horizFactor);
+vec3 finalCapColor = mix(uBaseRuby, blendedPhoto, horizFactor);
+
+diffuseColor.rgb = finalCapColor;
 diffuseColor.a = 1.0;`
         );
       };
@@ -1691,6 +1735,9 @@ diffuseColor.a = 1.0;`
       if (s.uniforms.uCapSideCleanLeft) s.uniforms.uCapSideCleanLeft.value = capMultiviewUniforms.uCapSideCleanLeft.value;
       if (s.uniforms.uTexRight) s.uniforms.uTexRight.value = capMultiviewUniforms.uTexRight.value;
       if (s.uniforms.uTexLeft) s.uniforms.uTexLeft.value = capMultiviewUniforms.uTexLeft.value;
+      if (s.uniforms.uCapLocalCenter) s.uniforms.uCapLocalCenter.value = capMultiviewUniforms.uCapLocalCenter.value;
+      if (s.uniforms.uHoleRadius) s.uniforms.uHoleRadius.value = capMultiviewUniforms.uHoleRadius.value;
+      if (s.uniforms.uDiskRadius) s.uniforms.uDiskRadius.value = capMultiviewUniforms.uDiskRadius.value;
       if (s.uniforms.uCapParallaxShiftFront) s.uniforms.uCapParallaxShiftFront.value = capMultiviewUniforms.uCapParallaxShiftFront.value;
       if (s.uniforms.uCapParallaxShiftBack) s.uniforms.uCapParallaxShiftBack.value = capMultiviewUniforms.uCapParallaxShiftBack.value;
       if (s.uniforms.uCapLateralProgressFront) s.uniforms.uCapLateralProgressFront.value = capMultiviewUniforms.uCapLateralProgressFront.value;
@@ -1938,13 +1985,13 @@ function buildSimulatedCapHole(targetCapGroup, capMesh) {
   capRecessGroup.name = 'capRecessGroup';
   targetCapGroup.add(capRecessGroup);
 
-  // 1. Cavidad exterior: borde perimetral de sombra oscura mate (sin reflejos metálicos)
-  const recessGeo = new THREE.CircleGeometry(recessRadius, 64);
+  // 1. Cavidad exterior / Borde perimetral del hueco (RingGeometry): expresa el espesor del cristal sin tapar el círculo interior
+  const recessGeo = new THREE.RingGeometry(diskRadius, recessRadius, 64);
   recessGeo.rotateX(-Math.PI / 2);
   const recessMat = new THREE.MeshBasicMaterial({
     color: 0x140508, // Borgoña extremadamente oscuro / negro cálido mate
     transparent: true,
-    opacity: 0.95,
+    opacity: 0.96,
     depthWrite: false,
     side: THREE.FrontSide,
     polygonOffset: true,
@@ -1956,25 +2003,34 @@ function buildSimulatedCapHole(targetCapGroup, capMesh) {
   capRecessShadowMesh.position.set(capCenter.x, recessElevationY, capCenter.z);
   capRecessGroup.add(capRecessShadowMesh);
 
-  // 2. Disco dorado interior: cara circular plana con oro champán aprobado (sin pared lateral)
+  // 2. Cabeza circular real del atomizador: cara circular plana con oro champán aprobado
+  // Pertenece al atomizador real (pulsadorGroup), no a la tapa
   const diskGeo = new THREE.CircleGeometry(diskRadius, 64);
   diskGeo.rotateX(-Math.PI / 2);
   capInsetAtomizerMaterial = new THREE.MeshMatcapMaterial({
     color: 0xffffff,
     matcap: atomizerChampagneMatcap,
-    transparent: true,
+    transparent: false,
     opacity: 1.0,
     depthTest: true,
-    depthWrite: false,
+    depthWrite: true,
     side: THREE.FrontSide,
     polygonOffset: true,
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
   });
+
   capInsetAtomizerDisk = new THREE.Mesh(diskGeo, capInsetAtomizerMaterial);
   capInsetAtomizerDisk.name = 'capInsetAtomizerDisk';
-  capInsetAtomizerDisk.position.set(capCenter.x, diskElevationY, capCenter.z);
-  capRecessGroup.add(capInsetAtomizerDisk);
+
+  if (pulsadorGroup) {
+    const diskLocalY = diskElevationY - pulsadorGroup.position.y;
+    capInsetAtomizerDisk.position.set(0, diskLocalY, 0);
+    pulsadorGroup.add(capInsetAtomizerDisk);
+  } else {
+    capInsetAtomizerDisk.position.set(capCenter.x, diskElevationY, capCenter.z);
+    capRecessGroup.add(capInsetAtomizerDisk);
+  }
 
   simulatedGoldAtomizerHead = capInsetAtomizerDisk;
 
@@ -2720,6 +2776,9 @@ loader.load(
     initialCameraPos = camera.position.clone();
     initialTarget = controls.target.clone();
 
+    // Inicializar inmediatamente la proyección del atomizador sobre la tapa
+    updateCapParallax(true);
+
     console.group('🏺 [Temptation Mystic 3D] Estructura y Sistema de Spray');
     console.log('%c● Modelo 3D cargado y centrado', 'color: #e5c158; font-weight: bold;');
     console.log('%c● Sistema de partículas (550 gotas AdditiveBlending)', 'color: #f7cad0; font-weight: bold;', sprayPoints);
@@ -2888,7 +2947,7 @@ if (resetCamBtn) {
   });
 }
 
-// Redimensionamiento de ventana
+// Redimensionamiento de ventana y eventos responsive (PC y móvil)
 function onWindowResize() {
   const width = window.innerWidth;
   const height = window.innerHeight;
@@ -2898,9 +2957,29 @@ function onWindowResize() {
 
   renderer.setSize(width, height);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+  // Ajuste de encuadre responsive manteniendo la dirección visual actual
+  const targetDist = calculateResponsiveCameraDistance();
+  if (controls) {
+    controls.minDistance = targetDist * 0.2;
+    controls.maxDistance = targetDist * 5.0;
+    const offset = new THREE.Vector3().subVectors(camera.position, controls.target);
+    if (offset.lengthSq() > 0.0001) {
+      offset.normalize().multiplyScalar(targetDist);
+      camera.position.copy(controls.target).add(offset);
+      controls.update();
+    }
+  }
+
+  // Recalcular inmediatamente la proyección del atomizador sin reutilizar valores previos
+  updateCapParallax(true);
 }
 
 window.addEventListener('resize', onWindowResize);
+window.addEventListener('orientationchange', () => {
+  setTimeout(onWindowResize, 60);
+});
+document.addEventListener('fullscreenchange', onWindowResize);
 
 // ==========================================================================
 // 8 y 9. Transición Frontal, Posterior y Lateral (Facing y Opacidades)
@@ -2911,6 +2990,147 @@ const bottleWorldNormal = new THREE.Vector3();
 const bottleWorldQuaternion = new THREE.Quaternion();
 const bottleUpNormal = new THREE.Vector3();
 
+// Constantes y vectores persistentes para el cálculo de paralaje interior (evita garbage collection)
+const _capLocalCam = new THREE.Vector3();
+const _atomizerWorldPos = new THREE.Vector3();
+const _frontCenterLocal = new THREE.Vector3();
+const _frontCenterWorld = new THREE.Vector3();
+const _frontOffsetLocal = new THREE.Vector3();
+const _frontOffsetWorld = new THREE.Vector3();
+const _backCenterLocal = new THREE.Vector3();
+const _backCenterWorld = new THREE.Vector3();
+const _backOffsetLocal = new THREE.Vector3();
+const _backOffsetWorld = new THREE.Vector3();
+const _projAtomizer = new THREE.Vector3();
+const _projFrontCenter = new THREE.Vector3();
+const _projFrontOffset = new THREE.Vector3();
+const _projBackCenter = new THREE.Vector3();
+const _projBackOffset = new THREE.Vector3();
+
+// Proyección dinámica del eje del atomizador 3D sobre la tapa (PC y móvil)
+function updateCapParallax(immediate = false) {
+  const activeCapMesh = savedTapaMesh || tapaMesh;
+  if (!activeCapMesh || !savedTapaLocalBox) return;
+
+  if (!savedTapaLocalCenter) {
+    savedTapaLocalCenter = savedTapaLocalBox.getCenter(new THREE.Vector3());
+  }
+  if (!savedTapaLocalSize) {
+    savedTapaLocalSize = savedTapaLocalBox.getSize(new THREE.Vector3());
+  }
+
+  // 1. Obtener la posición del eje vertical del atomizador 3D en el espacio mundial (nivel cuello/collar)
+  if (bottleGroup) {
+    _atomizerWorldPos.set(0, 0.036, 0);
+    bottleGroup.localToWorld(_atomizerWorldPos);
+  } else if (cuelloMesh) {
+    cuelloMesh.getWorldPosition(_atomizerWorldPos);
+  } else if (pulsadorGroup) {
+    pulsadorGroup.getWorldPosition(_atomizerWorldPos);
+  } else {
+    _atomizerWorldPos.set(0, 0, 0);
+  }
+
+  // 2. Proyección 3D a coordenadas normalizadas de pantalla (NDC [-1, 1])
+  // Totalmente independiente de window.innerWidth, CSS o devicePixelRatio
+  _projAtomizer.copy(_atomizerWorldPos).project(camera);
+
+  // 3. Posición relativa de la cámara en el espacio local de la tapa
+  activeCapMesh.worldToLocal(_capLocalCam.copy(camera.position));
+  const camRelX = _capLocalCam.x - savedTapaLocalCenter.x;
+  const camRelZ = _capLocalCam.z - savedTapaLocalCenter.z;
+
+  const inFrontHemisphere = camRelZ > 0.0001;
+  const inBackHemisphere = camRelZ < -0.0001;
+
+  // Cota Y local donde el mecanismo conecta con el atomizador (base de la tapa)
+  const capBaseY = savedTapaLocalBox.min.y + savedTapaLocalSize.y * 0.08;
+
+  // Paso horizontal de referencia en espacio local (corresponde a deltaU = 0.20 en la textura)
+  // En el shader: uvFront.x = (normPos.x - 0.5) / 1.085 + 0.5
+  // deltaNormPos = deltaU * 1.085
+  const deltaXRef = 0.20 * 1.085 * savedTapaLocalSize.x;
+
+  // --- Cara Frontal (+Z) ---
+  let targetShiftFront = 0;
+  let targetProgressFront = 1.0;
+
+  if (inFrontHemisphere) {
+    _frontCenterLocal.set(savedTapaLocalCenter.x, capBaseY, savedTapaLocalBox.max.z);
+    _frontOffsetLocal.set(savedTapaLocalCenter.x + deltaXRef, capBaseY, savedTapaLocalBox.max.z);
+
+    activeCapMesh.localToWorld(_frontCenterWorld.copy(_frontCenterLocal));
+    activeCapMesh.localToWorld(_frontOffsetWorld.copy(_frontOffsetLocal));
+
+    _projFrontCenter.copy(_frontCenterWorld).project(camera);
+    _projFrontOffset.copy(_frontOffsetWorld).project(camera);
+
+    const screenSpanUVFront = _projFrontOffset.x - _projFrontCenter.x;
+    const screenDistFront = _projAtomizer.x - _projFrontCenter.x;
+
+    if (Math.abs(screenSpanUVFront) > 0.00001) {
+      targetShiftFront = (screenDistFront / screenSpanUVFront) * 0.20;
+    }
+    targetShiftFront = THREE.MathUtils.clamp(targetShiftFront, -0.40, 0.40);
+
+    const angleFront = Math.abs(Math.atan2(camRelX, camRelZ));
+    targetProgressFront = THREE.MathUtils.clamp(angleFront / (Math.PI * 0.5), 0.0, 1.0);
+  } else {
+    targetShiftFront = Math.sign(camRelX || 1.0) * 0.40;
+    targetProgressFront = 1.0;
+  }
+
+  // --- Cara Posterior (-Z) ---
+  let targetShiftBack = 0;
+  let targetProgressBack = 1.0;
+
+  if (inBackHemisphere) {
+    _backCenterLocal.set(savedTapaLocalCenter.x, capBaseY, savedTapaLocalBox.min.z);
+    _backOffsetLocal.set(savedTapaLocalCenter.x - deltaXRef, capBaseY, savedTapaLocalBox.min.z);
+
+    activeCapMesh.localToWorld(_backCenterWorld.copy(_backCenterLocal));
+    activeCapMesh.localToWorld(_backOffsetWorld.copy(_backOffsetLocal));
+
+    _projBackCenter.copy(_backCenterWorld).project(camera);
+    _projBackOffset.copy(_backOffsetWorld).project(camera);
+
+    const screenSpanUVBack = _projBackOffset.x - _projBackCenter.x;
+    const screenDistBack = _projAtomizer.x - _projBackCenter.x;
+
+    if (Math.abs(screenSpanUVBack) > 0.00001) {
+      targetShiftBack = (screenDistBack / screenSpanUVBack) * 0.20;
+    }
+    targetShiftBack = THREE.MathUtils.clamp(targetShiftBack, -0.40, 0.40);
+
+    const angleBack = Math.abs(Math.atan2(-camRelX, -camRelZ));
+    targetProgressBack = THREE.MathUtils.clamp(angleBack / (Math.PI * 0.5), 0.0, 1.0);
+  } else {
+    targetShiftBack = Math.sign(-camRelX || 1.0) * 0.40;
+    targetProgressBack = 1.0;
+  }
+
+  // Suavizado temporal continuo: respuesta ágil y limpia sin vibraciones ni saltos
+  const LERP_FACTOR = 0.26;
+  if (immediate) {
+    smoothShiftFront = targetShiftFront;
+    smoothShiftBack = targetShiftBack;
+    smoothProgressFront = targetProgressFront;
+    smoothProgressBack = targetProgressBack;
+  } else {
+    smoothShiftFront = THREE.MathUtils.lerp(smoothShiftFront, targetShiftFront, LERP_FACTOR);
+    smoothShiftBack = THREE.MathUtils.lerp(smoothShiftBack, targetShiftBack, LERP_FACTOR);
+    smoothProgressFront = THREE.MathUtils.lerp(smoothProgressFront, targetProgressFront, LERP_FACTOR);
+    smoothProgressBack = THREE.MathUtils.lerp(smoothProgressBack, targetProgressBack, LERP_FACTOR);
+  }
+
+  if (capMultiviewUniforms) {
+    capMultiviewUniforms.uCapParallaxShiftFront.value = smoothShiftFront;
+    capMultiviewUniforms.uCapParallaxShiftBack.value = smoothShiftBack;
+    capMultiviewUniforms.uCapLateralProgressFront.value = smoothProgressFront;
+    capMultiviewUniforms.uCapLateralProgressBack.value = smoothProgressBack;
+  }
+}
+
 // Loop de animación principal único (sin bucles duplicados)
 function animate() {
   requestAnimationFrame(animate);
@@ -2920,18 +3140,7 @@ function animate() {
     updateParticles(sprayState.progress);
   }
 
-  // La cavidad permanece visible; el disco dorado simulado
-  // se desvanece según el progreso real de apertura de la tapa.
-  if (capGroup && capInsetAtomizerDisk && capInsetAtomizerMaterial) {
-    const capElevation = Math.max(0, capGroup.position.y - initialCapY);
-    const capLiftHeight = 0.048;
-    const capOpenProgress = THREE.MathUtils.clamp(capElevation / capLiftHeight, 0, 1);
-    const fadeStart = 0.02;
-    const fadeEnd = 0.18;
-    const goldDiskOpacity = 1.0 - THREE.MathUtils.smoothstep(capOpenProgress, fadeStart, fadeEnd);
-    capInsetAtomizerMaterial.opacity = goldDiskOpacity;
-    capInsetAtomizerDisk.visible = goldDiskOpacity > 0.001;
-  }
+  // La cabeza circular metálica permanece siempre 100% visible en el atomizador real.
 
   // Simulación independiente del hueco visto desde la cara inferior
   // de la tapa cuando esta se encuentra levantada.
@@ -2980,16 +3189,9 @@ function animate() {
 
     // Conector transparente escalonado: visibilidad angular independiente y control superior
     if (dipTubeConnectorGroup && dipTubeConnectorMaterial) {
-      // 1. Desvanecimiento suave frontal a lateral/posterior: visible de frente y diagonales moderadas,
-      // invisible hacia laterales y posterior para no duplicar ni alterar la foto posterior
       const connectorFacingFade = THREE.MathUtils.smoothstep(facing, 0.20, 0.65);
-
-      // 2. Control angular superior: al elevar la cámara hacia diagonales pronunciadas o vista superior,
-      // la opacidad disminuye suavemente hasta quedar invisible antes de que pueda verse sobre el anillo
       const connectorUpDot = Math.max(0, bottleUpNormal.dot(cameraDirection));
       const connectorElevationFade = 1.0 - THREE.MathUtils.smoothstep(connectorUpDot, 0.04, 0.32);
-
-      // 3. Factor único continuo suavizado y normalizado
       const connectorVisibility = THREE.MathUtils.clamp(
         connectorFacingFade * connectorElevationFade,
         0,
@@ -3002,60 +3204,8 @@ function animate() {
     }
   }
 
-  // Paralaje interior fotográfico en la tapa 3D con compresión y oclusión simétricas
-  const activeCapMesh = savedTapaMesh || tapaMesh;
-  if (activeCapMesh) {
-    const localCam = new THREE.Vector3();
-    activeCapMesh.worldToLocal(localCam.copy(camera.position));
-
-    // Descontar el centro local geométrico de la tapa para eliminar cualquier offset estático
-    if (!savedTapaLocalCenter && savedTapaLocalBox) {
-      savedTapaLocalCenter = savedTapaLocalBox.getCenter(new THREE.Vector3());
-    }
-    if (savedTapaLocalCenter) {
-      localCam.x -= savedTapaLocalCenter.x;
-      localCam.z -= savedTapaLocalCenter.z;
-    }
-
-    // Azimut local: frente (+Z) y dorso (-Z) utilizando medida angular continua y estable
-    const safeZ = Math.max(Math.abs(localCam.z), 0.0001);
-    const azimuthFront = Math.atan2(localCam.x, safeZ);
-    const azimuthBack = Math.atan2(-localCam.x, safeZ);
-
-    const inFrontHemisphere = localCam.z >= 0;
-    const inBackHemisphere = localCam.z <= 0;
-
-    // Normalizar ángulo en [-1, 1] respecto a pi/2
-    const rawNormFront = THREE.MathUtils.clamp(azimuthFront / (Math.PI * 0.5), -1.0, 1.0);
-    const rawNormBack = THREE.MathUtils.clamp(azimuthBack / (Math.PI * 0.5), -1.0, 1.0);
-
-    const normAngFront = inFrontHemisphere ? rawNormFront : Math.sign(rawNormFront || 1.0) * 1.0;
-    const normAngBack = inBackHemisphere ? rawNormBack : Math.sign(rawNormBack || 1.0) * 1.0;
-
-    const absAngFront = inFrontHemisphere ? Math.abs(rawNormFront) : 1.0;
-    const absAngBack = inBackHemisphere ? Math.abs(rawNormBack) : 1.0;
-
-    // Progreso lateral normalizado [0.0 = perpendicular exacto, 1.0 = lateral]
-    const targetProgressFront = THREE.MathUtils.smoothstep(absAngFront, 0.0, 1.0);
-    const targetProgressBack = THREE.MathUtils.smoothstep(absAngBack, 0.0, 1.0);
-
-    // Desplazamiento horizontal simétrico continuo y estable
-    const MAX_PARALLAX_SHIFT = 0.172;
-    const targetShiftFront = Math.sign(normAngFront) * targetProgressFront * MAX_PARALLAX_SHIFT;
-    const targetShiftBack = Math.sign(normAngBack) * targetProgressBack * MAX_PARALLAX_SHIFT;
-
-    // Suavizado temporal continuo para evitar vibraciones o saltos en OrbitControls
-    const LERP_FACTOR = 0.12;
-    smoothShiftFront = THREE.MathUtils.lerp(smoothShiftFront, targetShiftFront, LERP_FACTOR);
-    smoothShiftBack = THREE.MathUtils.lerp(smoothShiftBack, targetShiftBack, LERP_FACTOR);
-    smoothProgressFront = THREE.MathUtils.lerp(smoothProgressFront, targetProgressFront, LERP_FACTOR);
-    smoothProgressBack = THREE.MathUtils.lerp(smoothProgressBack, targetProgressBack, LERP_FACTOR);
-
-    capMultiviewUniforms.uCapParallaxShiftFront.value = smoothShiftFront;
-    capMultiviewUniforms.uCapParallaxShiftBack.value = smoothShiftBack;
-    capMultiviewUniforms.uCapLateralProgressFront.value = smoothProgressFront;
-    capMultiviewUniforms.uCapLateralProgressBack.value = smoothProgressBack;
-  }
+  // Paralaje interior fotográfico sincronizado en todo fotograma tanto en PC como en móvil
+  updateCapParallax(false);
 
   // 10. OrbitControls continúa funcionando en todo momento
   controls.update();
@@ -3063,3 +3213,4 @@ function animate() {
 }
 
 animate();
+
