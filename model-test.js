@@ -195,6 +195,8 @@ let atomizerAccentLight = null;
 // Elementos de la simulación del agujero central de la tapa
 let capRecessGroup = null;
 let capRecessShadowMesh = null;
+let capTopHoleDarkDisk = null;
+let capTopHoleDarkMaterial = null;
 let capInsetAtomizerDisk = null;
 let capInsetAtomizerMaterial = null;
 let capBottomRecessMesh = null;
@@ -2003,6 +2005,25 @@ function buildSimulatedCapHole(targetCapGroup, capMesh) {
   capRecessShadowMesh.position.set(capCenter.x, recessElevationY, capCenter.z);
   capRecessGroup.add(capRecessShadowMesh);
 
+  // 1b. Fondo oscuro profundo del orificio superior de la tapa abierta (CircleGeometry r = 0.0070)
+  const holeDarkGeo = new THREE.CircleGeometry(0.0070, 64);
+  holeDarkGeo.rotateX(-Math.PI / 2);
+  capTopHoleDarkMaterial = new THREE.MeshBasicMaterial({
+    color: 0x0d0205, // Negro/borgoña profundo
+    transparent: true,
+    opacity: 0.0,
+    depthWrite: false,
+    side: THREE.FrontSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -1.5,
+    polygonOffsetUnits: -1.5,
+  });
+  capTopHoleDarkDisk = new THREE.Mesh(holeDarkGeo, capTopHoleDarkMaterial);
+  capTopHoleDarkDisk.name = 'capTopHoleDarkDisk';
+  capTopHoleDarkDisk.position.set(capCenter.x, recessElevationY, capCenter.z);
+  capTopHoleDarkDisk.visible = false;
+  capRecessGroup.add(capTopHoleDarkDisk);
+
   // 2. Cabeza circular real del atomizador: cara circular plana con oro champán aprobado
   // Pertenece al atomizador real (pulsadorGroup), no a la tapa
   const diskGeo = new THREE.CircleGeometry(diskRadius, 64);
@@ -2010,10 +2031,10 @@ function buildSimulatedCapHole(targetCapGroup, capMesh) {
   capInsetAtomizerMaterial = new THREE.MeshMatcapMaterial({
     color: 0xffffff,
     matcap: atomizerChampagneMatcap,
-    transparent: false,
+    transparent: true,
     opacity: 1.0,
     depthTest: true,
-    depthWrite: true,
+    depthWrite: false,
     side: THREE.FrontSide,
     polygonOffset: true,
     polygonOffsetFactor: -2,
@@ -2831,6 +2852,10 @@ if (uncapBtn) {
           capInsetAtomizerMaterial.opacity = 1.0;
           capInsetAtomizerDisk.visible = true;
         }
+        if (capTopHoleDarkDisk && capTopHoleDarkMaterial) {
+          capTopHoleDarkMaterial.opacity = 0.0;
+          capTopHoleDarkDisk.visible = false;
+        }
         if (capRecessShadowMesh) {
           capRecessShadowMesh.visible = true;
           capRecessShadowMesh.material.opacity = 0.95;
@@ -3140,7 +3165,20 @@ function animate() {
     updateParticles(sprayState.progress);
   }
 
-  // La cabeza circular metálica permanece siempre 100% visible en el atomizador real.
+  // Control dinámico sincronizado del disco simulado del atomizador y el hueco profundo superior
+  const cleanMixVal = capMultiviewUniforms ? THREE.MathUtils.clamp(capMultiviewUniforms.uCapCleanMix.value, 0.0, 1.0) : 0.0;
+
+  if (capInsetAtomizerDisk && capInsetAtomizerMaterial) {
+    const goldOpacity = 1.0 - cleanMixVal;
+    capInsetAtomizerMaterial.opacity = goldOpacity;
+    capInsetAtomizerDisk.visible = cleanMixVal <= 0.05 && goldOpacity > 0.01;
+  }
+
+  if (capTopHoleDarkDisk && capTopHoleDarkMaterial) {
+    const holeOpacity = cleanMixVal * 0.98;
+    capTopHoleDarkMaterial.opacity = holeOpacity;
+    capTopHoleDarkDisk.visible = cleanMixVal > 0.02 && holeOpacity > 0.01;
+  }
 
   // Simulación independiente del hueco visto desde la cara inferior
   // de la tapa cuando esta se encuentra levantada.
