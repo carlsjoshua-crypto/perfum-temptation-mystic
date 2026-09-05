@@ -86,9 +86,6 @@ let isAnimating = false;
 // Referencias de elementos DOM
 const loadingOverlay = document.getElementById('loadingOverlay');
 const loadingText = document.getElementById('loadingText');
-const verticesBodyEl = document.getElementById('verticesBody');
-const verticesCapEl = document.getElementById('verticesCap');
-const verticesNeckEl = document.getElementById('verticesNeck');
 const uncapBtn = document.getElementById('uncapBtn');
 const resetCamBtn = document.getElementById('resetCamBtn');
 const screenMistOverlay = document.getElementById('screenMistOverlay');
@@ -98,20 +95,10 @@ let modelRoot = null;
 let bottleGroup = null;
 let capGroup = null;
 let cuerpoMesh = null; // bodyOuterGlass
-let innerBodyMesh = null; // bodyInnerLiquid
-let bodyInnerLiquid = null;
 let bodyAdvertisingShader = null; // Shader publicitario del cuerpo (base lateral)
-let bodyFrontPhotoProjection = null; // Proyección de fotografía frontal real
-let bodyFrontPhotoMaterial = null;
 let bodyFrontCanvasTexture = null;
-let capFrontPhotoProjection = null; // Proyección de fotografía frontal de la tapa
-let capFrontPhotoMaterial = null;
 let capFrontCanvasTexture = null;
-let bodyBackPhotoProjection = null; // Proyección de fotografía posterior del cuerpo
-let bodyBackPhotoMaterial = null;
 let bodyBackCanvasTexture = null;
-let capBackPhotoProjection = null; // Proyección de fotografía posterior de la tapa
-let capBackPhotoMaterial = null;
 let capBackCanvasTexture = null;
 
 // Texturas explícitas e independientes para cuerpo y tapa
@@ -155,11 +142,6 @@ const bodyMultiviewUniforms = {
   uBaseBurgundy: { value: new THREE.Color(0x350009) },
 };
 
-// Proyecciones de fotografía lateral (derecha e izquierda)
-let bodyRightPhotoProjection = null;
-let bodyLeftPhotoProjection = null;
-let bodyRightPhotoMaterial = null;
-let bodyLeftPhotoMaterial = null;
 let bodyRightCanvasTexture = null;
 let bodyLeftCanvasTexture = null;
 
@@ -178,10 +160,6 @@ let savedTapaBox = null;
 let savedTapaLocalBox = null;
 let savedTapaLocalSize = null;
 
-let capRightPhotoProjection = null;
-let capLeftPhotoProjection = null;
-let capRightPhotoMaterial = null;
-let capLeftPhotoMaterial = null;
 let capRightCanvasTexture = null;
 let capLeftCanvasTexture = null;
 
@@ -197,8 +175,6 @@ let cuelloMesh = null;
 let atomizerGroup = null;
 let pulsadorGroup = null;
 let sprayPinholeMesh = null;
-let labelMesh = null;
-let label = null;
 let atomizerAccentLight = null;
 
 // Elementos de la simulación del agujero central de la tapa
@@ -210,10 +186,6 @@ let capBottomRecessMesh = null;
 let capBottomRecessMaterial = null;
 let initialCapY = 0;
 let simulatedGoldAtomizerHead = null;
-let simulatedCapTopRing = null;
-let simulatedCapTopGroove = null;
-let simulatedCapUndersideCavity = null;
-let simulatedCapUndersideRing = null;
 
 // Manguera interna procedural (Dip Tube)
 let dipTubeGroup = null;
@@ -244,17 +216,6 @@ const outerGlassMaterial = new THREE.MeshPhysicalMaterial({
 });
 const previousOuterGlassMaterial = outerGlassMaterial;
 
-// PASO 8: Capa interior del líquido oscuro (conservada para reactivación posterior)
-const innerLiquidMaterial = new THREE.MeshStandardMaterial({
-  color: 0x350009,
-  metalness: 0,
-  roughness: 0.48,
-  transparent: false,
-  opacity: 1,
-  vertexColors: false,
-  envMap: null,
-  envMapIntensity: 0,
-});
 
 // 2. Material base de la tapa (MeshPhongMaterial rubí calibrado)
 const capMaterial = new THREE.MeshPhongMaterial({
@@ -558,8 +519,6 @@ function setupFrontPhotoProjection(cuerpoMesh, bottleSize, cuerpoCenter, cuerpoB
   if (!cuerpoMesh || !cuerpoMesh.geometry || !bottleSize || !cuerpoCenter) {
     console.warn('Geometría o dimensiones del cuerpo no disponibles para la proyección.');
     if (cuerpoMesh) cuerpoMesh.visible = true;
-    if (label) label.visible = true;
-    if (labelMesh) labelMesh.visible = true;
     return;
   }
 
@@ -629,78 +588,12 @@ function setupFrontPhotoProjection(cuerpoMesh, bottleSize, cuerpoCenter, cuerpoB
         bodyFrontTexture = bodyFrontCanvasTexture;
         bodyMultiviewUniforms.uTexFront.value = bodyFrontTexture;
 
-        // Material fotográfico transparente con tono original (toneMapped: false)
-        bodyFrontPhotoMaterial = new THREE.MeshBasicMaterial({
-          map: bodyFrontCanvasTexture,
-          transparent: true,
-          opacity: 1,
-          alphaTest: 0.01,
-          depthWrite: false,
-          depthTest: true,
-          side: THREE.FrontSide,
-          toneMapped: false,
-        });
-
-        // Proporciones exactas de la cara frontal (98.5% de su ancho y altura reales en el modelo)
-        const photoWidth = bottleSize.x * 0.985;
-        const photoHeight = bottleSize.y * 0.985;
-        const photoGeo = new THREE.PlaneGeometry(photoWidth, photoHeight);
-
-        bodyFrontPhotoProjection = new THREE.Mesh(photoGeo, bodyFrontPhotoMaterial);
-        bodyFrontPhotoProjection.name = 'bodyFrontPhotoProjection';
-        bodyFrontPhotoProjection.renderOrder = 3;
-
-        // Cara frontal (+Z) centrada y apenas separada de la superficie para evitar z-fighting
-        const posZ = cuerpoBox ? cuerpoBox.max.z + 0.00015 : 0.01755;
-        bodyFrontPhotoProjection.position.set(cuerpoCenter.x, cuerpoCenter.y, posZ);
-
-        bottleGroup.add(bodyFrontPhotoProjection);
-
-        // 6. Ocultar únicamente después de confirmar creación exitosa de la proyección
-        if (label) {
-          label.visible = false;
-        }
-        if (labelMesh) {
-          labelMesh.visible = false;
-        }
-        if (bodyInnerLiquid) {
-          bodyInnerLiquid.visible = false;
-        }
-        if (innerBodyMesh) {
-          innerBodyMesh.visible = false;
-        }
-
         // Intentar inicializar shader multivista
         tryInitBodyMultiviewShader();
       } catch (err) {
-        console.error('Error al crear la proyección frontal:', err);
-
-        // 11. Eliminar solamente la proyección incompleta
-        if (bodyFrontPhotoProjection) {
-          if (bodyFrontPhotoProjection.parent) {
-            bodyFrontPhotoProjection.parent.remove(bodyFrontPhotoProjection);
-          }
-          if (bodyFrontPhotoProjection.geometry) {
-            bodyFrontPhotoProjection.geometry.dispose();
-          }
-          bodyFrontPhotoProjection = null;
-        }
-
-        // Mantener cuerpo 3D visible y restaurar etiqueta
+        console.error('Error al procesar la textura frontal del cuerpo:', err);
         if (cuerpoMesh) {
           cuerpoMesh.visible = true;
-        }
-        if (label) {
-          label.visible = true;
-        }
-        if (labelMesh) {
-          labelMesh.visible = true;
-        }
-        if (bodyInnerLiquid) {
-          bodyInnerLiquid.visible = false;
-        }
-        if (innerBodyMesh) {
-          innerBodyMesh.visible = false;
         }
       }
     },
@@ -710,18 +603,6 @@ function setupFrontPhotoProjection(cuerpoMesh, bottleSize, cuerpoCenter, cuerpoB
 
       if (cuerpoMesh) {
         cuerpoMesh.visible = true;
-      }
-      if (label) {
-        label.visible = true;
-      }
-      if (labelMesh) {
-        labelMesh.visible = true;
-      }
-      if (bodyInnerLiquid) {
-        bodyInnerLiquid.visible = false;
-      }
-      if (innerBodyMesh) {
-        innerBodyMesh.visible = false;
       }
     }
   );
@@ -786,49 +667,8 @@ function setupCapFrontPhotoProjection(targetCapGroup, capMesh) {
         capMultiviewUniforms.uCapOrigFront.value = capOriginalFrontTexture;
 
         tryInitCapMultiviewShader();
-
-        capFrontPhotoMaterial = new THREE.MeshBasicMaterial({
-          map: capOriginalFrontTexture,
-          transparent: true,
-          opacity: 1,
-          alphaTest: 0.01,
-          depthWrite: false,
-          depthTest: false,
-          side: THREE.FrontSide,
-          toneMapped: false,
-        });
-
-        const tapaBox = new THREE.Box3().setFromObject(capMesh);
-        const tapaSize = tapaBox.getSize(new THREE.Vector3());
-        const tapaCenter = tapaBox.getCenter(new THREE.Vector3());
-
-        const photoWidth = tapaSize.x * 0.99;
-        const photoHeight = tapaSize.y * 0.98;
-        const photoGeo = new THREE.PlaneGeometry(photoWidth, photoHeight);
-
-        capFrontPhotoProjection = new THREE.Mesh(photoGeo, capFrontPhotoMaterial);
-        capFrontPhotoProjection.name = 'capFrontPhotoProjection';
-        capFrontPhotoProjection.renderOrder = 5;
-        capFrontPhotoProjection.scale.x = 1.04 * 1.025;
-        capFrontPhotoProjection.scale.y = 1.20 * 1.08;
-
-        const offsetVertical = -0.095 * tapaSize.y;
-        const posY = tapaCenter.y + offsetVertical;
-        const posZ = tapaBox.max.z + 0.00012;
-        capFrontPhotoProjection.position.set(tapaCenter.x, posY, posZ);
-
-        targetCapGroup.add(capFrontPhotoProjection);
       } catch (err) {
-        console.error('Error al crear proyección frontal original de la tapa:', err);
-        if (capFrontPhotoProjection) {
-          if (capFrontPhotoProjection.parent) {
-            capFrontPhotoProjection.parent.remove(capFrontPhotoProjection);
-          }
-          if (capFrontPhotoProjection.geometry) {
-            capFrontPhotoProjection.geometry.dispose();
-          }
-          capFrontPhotoProjection = null;
-        }
+        console.error('Error al procesar la textura frontal original de la tapa:', err);
       }
     },
     undefined,
@@ -988,40 +828,6 @@ function setupBackPhotoProjections(cuerpoMesh, bottleSize, cuerpoCenter, cuerpoB
             bodyBackCanvasTexture.needsUpdate = true;
             bodyBackTexture = bodyBackCanvasTexture;
             bodyMultiviewUniforms.uTexBack.value = bodyBackTexture;
-
-            bodyBackPhotoMaterial = new THREE.MeshBasicMaterial({
-              map: bodyBackCanvasTexture,
-              transparent: true,
-              opacity: 0,
-              alphaTest: 0.01,
-              depthWrite: false,
-              depthTest: true,
-              side: THREE.FrontSide,
-              toneMapped: false,
-            });
-
-            // Mismo ancho y altura proporcionales a la geometría
-            const photoWidth = bottleSize.x * 0.985;
-            const photoHeight = bottleSize.y * 0.985;
-            const photoGeo = new THREE.PlaneGeometry(photoWidth, photoHeight);
-
-            bodyBackPhotoProjection = new THREE.Mesh(photoGeo, bodyBackPhotoMaterial);
-            bodyBackPhotoProjection.name = 'bodyBackPhotoProjection';
-            bodyBackPhotoProjection.renderOrder = 4;
-
-            // 3. Reducir ligeramente la proyección posterior (0.985 en X, 0.992 en Y)
-            bodyBackPhotoProjection.scale.x = 0.985;
-            bodyBackPhotoProjection.scale.y = 0.992;
-
-            // 2. Mover hacia la izquierda vista desde atrás (+X en coordenadas de bottleGroup)
-            const horizontalOffset = 0.012 * bottleSize.x;
-            const posX = cuerpoCenter.x + horizontalOffset;
-            const posZ = cuerpoBox ? cuerpoBox.min.z - 0.00015 : -0.01755;
-
-            bodyBackPhotoProjection.position.set(posX, cuerpoCenter.y, posZ);
-            bodyBackPhotoProjection.rotation.y = Math.PI;
-
-            bottleGroup.add(bodyBackPhotoProjection);
           }
         }
 
@@ -1068,40 +874,6 @@ function setupBackPhotoProjections(cuerpoMesh, bottleSize, cuerpoCenter, cuerpoB
             capMultiviewUniforms.uCapOrigBack.value = capOriginalBackTexture;
 
             tryInitCapMultiviewShader();
-
-            capBackPhotoMaterial = new THREE.MeshBasicMaterial({
-              map: capOriginalBackTexture,
-              transparent: true,
-              opacity: 0,
-              alphaTest: 0.01,
-              depthWrite: false,
-              depthTest: false,
-              side: THREE.FrontSide,
-              toneMapped: false,
-            });
-
-            const tapaBox = new THREE.Box3().setFromObject(capMesh);
-            const tapaSize = tapaBox.getSize(new THREE.Vector3());
-            const tapaCenter = tapaBox.getCenter(new THREE.Vector3());
-
-            const photoWidth = tapaSize.x * 0.99;
-            const photoHeight = tapaSize.y * 0.98;
-            const photoGeo = new THREE.PlaneGeometry(photoWidth, photoHeight);
-
-            capBackPhotoProjection = new THREE.Mesh(photoGeo, capBackPhotoMaterial);
-            capBackPhotoProjection.name = 'capBackPhotoProjection';
-            capBackPhotoProjection.renderOrder = 5;
-            capBackPhotoProjection.scale.x = 1.04 * 1.025;
-            capBackPhotoProjection.scale.y = 1.20 * 1.08;
-
-            const offsetVertical = -0.095 * tapaSize.y;
-            const posY = tapaCenter.y + offsetVertical;
-            const posZ = tapaBox.min.z - 0.00012;
-
-            capBackPhotoProjection.position.set(tapaCenter.x, posY, posZ);
-            capBackPhotoProjection.rotation.y = Math.PI;
-
-            targetCapGroup.add(capBackPhotoProjection);
           }
         }
 
@@ -1153,18 +925,6 @@ function setupSidePhotoProjections(
           return tex;
         }
 
-        function createSideMaterial(texture) {
-          return new THREE.MeshBasicMaterial({
-            map: texture,
-            transparent: true,
-            opacity: 0,
-            depthTest: true,
-            depthWrite: false,
-            side: THREE.FrontSide,
-            toneMapped: false,
-          });
-        }
-
         // -------------------------------------------------------------
         // 1. Cuerpo lateral (Cuerpo: x=0.414, y=0.463, width=0.170, height=0.490)
         // -------------------------------------------------------------
@@ -1198,30 +958,6 @@ function setupSidePhotoProjections(
           bodyLeftCanvasTexture = createSideTexture(bodyLeftCanvas);
           bodyMultiviewUniforms.uTexRight.value = bodyRightCanvasTexture;
           bodyMultiviewUniforms.uTexLeft.value = bodyLeftCanvasTexture;
-
-          bodyRightPhotoMaterial = createSideMaterial(bodyRightCanvasTexture);
-          bodyLeftPhotoMaterial = createSideMaterial(bodyLeftCanvasTexture);
-
-          // Ajuste al 98% de la superficie disponible (profundidad Z y altura Y)
-          const sideWidth = bottleSize.z * 0.98;
-          const sideHeight = bottleSize.y * 0.98;
-          const bodySideGeo = new THREE.PlaneGeometry(sideWidth, sideHeight);
-
-          // Lateral derecho (+X)
-          bodyRightPhotoProjection = new THREE.Mesh(bodySideGeo, bodyRightPhotoMaterial);
-          bodyRightPhotoProjection.name = 'bodyRightPhotoProjection';
-          bodyRightPhotoProjection.renderOrder = 4;
-          bodyRightPhotoProjection.position.set(cuerpoBox.max.x + 0.00012, cuerpoCenter.y, 0);
-          bodyRightPhotoProjection.rotation.y = Math.PI / 2;
-          bottleGroup.add(bodyRightPhotoProjection);
-
-          // Lateral izquierdo (-X)
-          bodyLeftPhotoProjection = new THREE.Mesh(bodySideGeo, bodyLeftPhotoMaterial);
-          bodyLeftPhotoProjection.name = 'bodyLeftPhotoProjection';
-          bodyLeftPhotoProjection.renderOrder = 4;
-          bodyLeftPhotoProjection.position.set(cuerpoBox.min.x - 0.00012, cuerpoCenter.y, 0);
-          bodyLeftPhotoProjection.rotation.y = -Math.PI / 2;
-          bottleGroup.add(bodyLeftPhotoProjection);
         }
 
         // -------------------------------------------------------------
@@ -1369,57 +1105,6 @@ function setupCapSideTextures(targetCapGroup, capMesh) {
       capMultiviewUniforms.uTexRight.value = capSideClosedTexture;
       capMultiviewUniforms.uTexLeft.value = capSideClosedMirroredTexture;
 
-      if (targetCapGroup && capMesh) {
-        const tapaBox = new THREE.Box3().setFromObject(capMesh);
-        const tapaSize = tapaBox.getSize(new THREE.Vector3());
-        const tapaCenter = tapaBox.getCenter(new THREE.Vector3());
-
-        const sideWidth = tapaSize.z * 0.98;
-        const sideHeight = tapaSize.y * 0.98;
-        const capSideGeo = new THREE.PlaneGeometry(sideWidth, sideHeight);
-
-        capRightPhotoMaterial = new THREE.MeshBasicMaterial({
-          map: capSideClosedTexture,
-          transparent: true,
-          opacity: 0,
-          depthTest: true,
-          depthWrite: false,
-          side: THREE.FrontSide,
-          toneMapped: false,
-        });
-        capLeftPhotoMaterial = new THREE.MeshBasicMaterial({
-          map: capSideClosedMirroredTexture,
-          transparent: true,
-          opacity: 0,
-          depthTest: true,
-          depthWrite: false,
-          side: THREE.FrontSide,
-          toneMapped: false,
-        });
-
-        if (!capRightPhotoProjection) {
-          capRightPhotoProjection = new THREE.Mesh(capSideGeo, capRightPhotoMaterial);
-          capRightPhotoProjection.name = 'capRightPhotoProjection';
-          capRightPhotoProjection.renderOrder = 5;
-          capRightPhotoProjection.position.set(tapaBox.max.x + 0.00012, tapaCenter.y, 0);
-          capRightPhotoProjection.rotation.y = Math.PI / 2;
-          targetCapGroup.add(capRightPhotoProjection);
-        } else {
-          capRightPhotoProjection.material = capRightPhotoMaterial;
-        }
-
-        if (!capLeftPhotoProjection) {
-          capLeftPhotoProjection = new THREE.Mesh(capSideGeo, capLeftPhotoMaterial);
-          capLeftPhotoProjection.name = 'capLeftPhotoProjection';
-          capLeftPhotoProjection.renderOrder = 5;
-          capLeftPhotoProjection.position.set(tapaBox.min.x - 0.00012, tapaCenter.y, 0);
-          capLeftPhotoProjection.rotation.y = -Math.PI / 2;
-          targetCapGroup.add(capLeftPhotoProjection);
-        } else {
-          capLeftPhotoProjection.material = capLeftPhotoMaterial;
-        }
-      }
-
       tryInitCapMultiviewShader();
     } catch (err) {
       console.error('Error al procesar texturas laterales de la tapa:', err);
@@ -1471,10 +1156,6 @@ function tryInitBodyMultiviewShader(cMesh, bSize, cBox, lBox, lSize) {
       targetMesh.material = bodyAdvertisingShader;
       targetMesh.material.needsUpdate = true;
     }
-    if (bodyFrontPhotoProjection) bodyFrontPhotoProjection.visible = true;
-    if (bodyBackPhotoProjection) bodyBackPhotoProjection.visible = true;
-    if (bodyRightPhotoProjection) bodyRightPhotoProjection.visible = true;
-    if (bodyLeftPhotoProjection) bodyLeftPhotoProjection.visible = true;
     return;
   }
 
@@ -1633,29 +1314,13 @@ diffuseColor.a = 1.0;`
     targetMesh.material = bodyMultiviewMaterial;
     targetMesh.material.needsUpdate = true;
 
-    // Ocultar únicamente las proyecciones planas del cuerpo
-    if (bodyFrontPhotoProjection) bodyFrontPhotoProjection.visible = false;
-    if (bodyBackPhotoProjection) bodyBackPhotoProjection.visible = false;
-    if (bodyRightPhotoProjection) bodyRightPhotoProjection.visible = false;
-    if (bodyLeftPhotoProjection) bodyLeftPhotoProjection.visible = false;
-
-    // Ocultar la etiqueta procedural básica porque está integrada en la foto frontal
-    if (labelMesh) labelMesh.visible = false;
-    if (label) label.visible = false;
-    if (innerBodyMesh) innerBodyMesh.visible = false;
-    if (bodyInnerLiquid) bodyInnerLiquid.visible = false;
-
     console.log('✨ [Shader Multivista] Cuerpo actualizado exitosamente con shader proyectivo en malla 3D.');
   } catch (err) {
     console.error('Error al inicializar shader multivista del cuerpo:', err);
-    // Restaurar material y planos en caso de error
+    // Restaurar material en caso de error
     if (bodyAdvertisingShader) {
       targetMesh.material = bodyAdvertisingShader;
     }
-    if (bodyFrontPhotoProjection) bodyFrontPhotoProjection.visible = true;
-    if (bodyBackPhotoProjection) bodyBackPhotoProjection.visible = true;
-    if (bodyRightPhotoProjection) bodyRightPhotoProjection.visible = true;
-    if (bodyLeftPhotoProjection) bodyLeftPhotoProjection.visible = true;
   }
 }
 
@@ -1682,10 +1347,6 @@ function tryInitCapMultiviewShader(tMesh, tBox, lBox, lSize) {
       targetMesh.material = capMaterial;
       targetMesh.material.needsUpdate = true;
     }
-    if (capFrontPhotoProjection) capFrontPhotoProjection.visible = true;
-    if (capBackPhotoProjection) capBackPhotoProjection.visible = true;
-    if (capRightPhotoProjection) capRightPhotoProjection.visible = true;
-    if (capLeftPhotoProjection) capLeftPhotoProjection.visible = true;
     return;
   }
 
@@ -1902,122 +1563,17 @@ diffuseColor.a = 1.0;`
     targetMesh.material = capMultiviewMaterial;
     targetMesh.material.needsUpdate = true;
 
-    // Ocultar únicamente las proyecciones planas de la tapa
-    if (capFrontPhotoProjection) capFrontPhotoProjection.visible = false;
-    if (capBackPhotoProjection) capBackPhotoProjection.visible = false;
-    if (capRightPhotoProjection) capRightPhotoProjection.visible = false;
-    if (capLeftPhotoProjection) capLeftPhotoProjection.visible = false;
-
     console.log('✨ [Shader Multivista] Tapa actualizada exitosamente con shader proyectivo en malla 3D.');
   } catch (err) {
     console.error('Error al inicializar shader multivista de la tapa:', err);
-    // Restaurar material y planos en caso de error
+    // Restaurar material en caso de error
     if (capMaterial) {
       targetMesh.material = capMaterial;
       targetMesh.material.needsUpdate = true;
     }
-    if (capFrontPhotoProjection) capFrontPhotoProjection.visible = true;
-    if (capBackPhotoProjection) capBackPhotoProjection.visible = true;
-    if (capRightPhotoProjection) capRightPhotoProjection.visible = true;
-    if (capLeftPhotoProjection) capLeftPhotoProjection.visible = true;
   }
 }
 
-// ==========================================================================
-// PASO 11: Etiqueta Frontal Agrandada 1.7x con CanvasTexture 2048x2048
-// ==========================================================================
-function createLabelTexture() {
-  const labelCanvas = document.createElement('canvas');
-  labelCanvas.width = 2048;
-  labelCanvas.height = 2048;
-  const ctx = labelCanvas.getContext('2d');
-
-  function renderLabel() {
-    ctx.clearRect(0, 0, labelCanvas.width, labelCanvas.height);
-
-    const cx = labelCanvas.width / 2;
-
-    const goldGrad = ctx.createLinearGradient(0, 480, 0, 1680);
-    goldGrad.addColorStop(0.0, '#fff4cc');
-    goldGrad.addColorStop(0.25, '#f0cf65');
-    goldGrad.addColorStop(0.65, '#c89324');
-    goldGrad.addColorStop(1.0, '#f9e08c');
-
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    // 1. TEMPTATION
-    ctx.font = '600 112px "Montserrat", sans-serif';
-    ctx.fillStyle = goldGrad;
-    ctx.letterSpacing = '20px';
-    ctx.fillText('TEMPTATION', cx, 730);
-
-    // 2. MYSTIC
-    ctx.font = 'italic 700 164px "Cormorant Garamond", Georgia, serif';
-    ctx.fillStyle = goldGrad;
-    ctx.letterSpacing = '24px';
-    ctx.fillText('MYSTIC', cx, 910);
-
-    // Línea sutil decorativa dorada
-    ctx.strokeStyle = 'rgba(229, 193, 88, 0.45)';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(cx - 180, 1030);
-    ctx.lineTo(cx + 180, 1030);
-    ctx.stroke();
-
-    // 3. EAU DE PARFUM
-    ctx.font = '500 48px "Montserrat", sans-serif';
-    ctx.fillStyle = '#ecd79a';
-    ctx.letterSpacing = '14px';
-    ctx.fillText('EAU DE PARFUM', cx, 1110);
-
-    // 4. YANBAL
-    ctx.font = '700 64px "Montserrat", sans-serif';
-    ctx.fillStyle = goldGrad;
-    ctx.letterSpacing = '28px';
-    ctx.fillText('YANBAL', cx, 1420);
-  }
-
-  renderLabel();
-
-  if (document.fonts) {
-    document.fonts.ready.then(() => {
-      renderLabel();
-      texture.needsUpdate = true;
-    });
-  }
-
-  const texture = new THREE.CanvasTexture(labelCanvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = 8;
-  return texture;
-}
-
-function buildLabelMesh(cuerpoCenter) {
-  const labelTexture = createLabelTexture();
-  // Aumentado ~1.7 veces conservando proporciones
-  const labelGeo = new THREE.PlaneGeometry(0.058, 0.058);
-  const labelMat = new THREE.MeshBasicMaterial({
-    map: labelTexture,
-    transparent: true,
-    opacity: 0.95,
-    depthWrite: false,
-    polygonOffset: true,
-    polygonOffsetFactor: -1,
-    polygonOffsetUnits: -1,
-    side: THREE.FrontSide,
-    toneMapped: false,
-  });
-
-  const mesh = new THREE.Mesh(labelGeo, labelMat);
-  mesh.name = 'labelMesh';
-  mesh.renderOrder = 3; // PASO 10: Delante del panel
-  // Centrado horizontal, ubicado en la mitad superior del panel
-  const posY = (cuerpoCenter ? cuerpoCenter.y : -0.0152) + 0.0115;
-  mesh.position.set(0, posY, 0.01758);
-  return mesh;
-}
 
 // ==========================================================================
 // Manguera Interna Frontal Procedural (Dip Tube)
@@ -2283,20 +1839,6 @@ function buildSimulatedCapHole(targetCapGroup, capMesh) {
   capInsetAtomizerDisk.position.set(capCenter.x, diskElevationY, capCenter.z);
   capRecessGroup.add(capInsetAtomizerDisk);
 
-  // Mallas auxiliares dummy para absorber llamadas de animación previas sin alterar la cavidad
-  const dummyMatRing = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, visible: false });
-  const dummyMatGroove = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, visible: false });
-  const dummyGeo = new THREE.BufferGeometry();
-  simulatedCapTopRing = new THREE.Mesh(dummyGeo, dummyMatRing);
-  simulatedCapTopRing.name = 'simulatedCapTopRing';
-  simulatedCapTopRing.visible = false;
-  targetCapGroup.add(simulatedCapTopRing);
-
-  simulatedCapTopGroove = new THREE.Mesh(dummyGeo, dummyMatGroove);
-  simulatedCapTopGroove.name = 'simulatedCapTopGroove';
-  simulatedCapTopGroove.visible = false;
-  targetCapGroup.add(simulatedCapTopGroove);
-
   simulatedGoldAtomizerHead = capInsetAtomizerDisk;
 
   // Simulación independiente del hueco visto desde la cara inferior
@@ -2358,18 +1900,6 @@ function buildSimulatedCapHole(targetCapGroup, capMesh) {
   capBottomRecessMesh.position.set(capCenter.x, bottomRecessElevationY, capCenter.z);
   capBottomRecessMesh.visible = false;
   targetCapGroup.add(capBottomRecessMesh);
-
-  // Mallas auxiliares dummy para absorber llamadas de animación previas sin alterar la escena
-  const dummyMatUnder = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, visible: false });
-  simulatedCapUndersideCavity = new THREE.Mesh(dummyGeo, dummyMatUnder);
-  simulatedCapUndersideCavity.name = 'simulatedCapUndersideCavity';
-  simulatedCapUndersideCavity.visible = false;
-  targetCapGroup.add(simulatedCapUndersideCavity);
-
-  simulatedCapUndersideRing = new THREE.Mesh(dummyGeo, dummyMatUnder.clone());
-  simulatedCapUndersideRing.name = 'simulatedCapUndersideRing';
-  simulatedCapUndersideRing.visible = false;
-  targetCapGroup.add(simulatedCapUndersideRing);
 }
 
 // ==========================================================================
@@ -2897,23 +2427,6 @@ loader.load(
     const cuerpoCenter = cuerpoBox.getCenter(new THREE.Vector3());
     const cuerpoSize = cuerpoBox.getSize(new THREE.Vector3());
 
-    // PASO 2: Desactivar temporalmente la capa interior (bodyInnerLiquid.visible = false)
-    innerBodyMesh = cuerpoMesh.clone();
-    innerBodyMesh.name = 'bodyInnerLiquid';
-    innerBodyMesh.material = innerLiquidMaterial;
-    innerBodyMesh.visible = false;
-    bodyInnerLiquid = innerBodyMesh;
-    const scaleFactor = 0.96;
-    innerBodyMesh.scale.multiplyScalar(scaleFactor);
-
-    // Centrado concéntrico perfecto con respecto al centro geométrico del cuerpo
-    innerBodyMesh.position
-      .copy(cuerpoCenter)
-      .sub(cuerpoCenter.clone().sub(cuerpoMesh.position).multiplyScalar(scaleFactor));
-
-    // La capa interior queda dentro de bottleGroup (lista para reactivación posterior)
-    bottleGroup.add(innerBodyMesh);
-
     // 7. Tapa: cristal rojo oscuro y pulido con poca transmisión
     tapaMesh.name = 'tapa';
     tapaMesh.material = capMaterial;
@@ -2928,10 +2441,6 @@ loader.load(
       }
       cuelloMesh.geometry.computeVertexNormals();
     }
-
-    if (verticesBodyEl) verticesBodyEl.textContent = `${cuerpoMesh.geometry.attributes.position.count.toLocaleString()} vtx`;
-    if (verticesCapEl) verticesCapEl.textContent = `${tapaMesh.geometry.attributes.position.count.toLocaleString()} vtx`;
-    if (verticesNeckEl) verticesNeckEl.textContent = `${cuelloMesh.geometry.attributes.position.count.toLocaleString()} vtx`;
 
     // Atomizador procedural
     atomizerGroup = buildProceduralAtomizer();
@@ -2957,12 +2466,6 @@ loader.load(
           child.name === 'tapa' ||
           child.name === 'sprayPinhole' ||
           child.name === 'atomizerGoldHighlight' ||
-          child.name === 'simulatedCapTopRing' ||
-          child.name === 'simulatedCapTopGroove' ||
-          child.name === 'simulatedCapUndersideCavity' ||
-          child.name === 'simulatedCapUndersideRing' ||
-          child.name.includes('PhotoProjection') ||
-          child.name === 'labelMesh' ||
           child.name === 'dipTubeMesh' ||
           child.name === 'dipTubeEndCap' ||
           child.name === 'connectorLevel1' ||
@@ -2984,12 +2487,6 @@ loader.load(
       });
     });
 
-    // 6. Etiqueta inicial procedural visible (se ocultará únicamente si la fotografía frontal carga con éxito)
-    labelMesh = buildLabelMesh(cuerpoCenter);
-    label = labelMesh;
-    labelMesh.visible = true;
-    bottleGroup.add(labelMesh);
-
     // 5. La creación de la proyección debe ejecutarse únicamente después de que el GLB haya terminado de cargar,
     // cuerpoMesh exista, la geometría del cuerpo exista y el bounding box sea válido
     const isBoundingBoxValid =
@@ -3007,10 +2504,8 @@ loader.load(
     if (cuerpoMesh && cuerpoMesh.geometry && isBoundingBoxValid) {
       setupFrontPhotoProjection(cuerpoMesh, cuerpoSize, cuerpoCenter, cuerpoBox);
     } else {
-      console.warn('Condiciones de geometría no válidas para proyección frontal. Se mantiene etiqueta procedural.');
+      console.warn('Condiciones de geometría no válidas para proyección frontal.');
       cuerpoMesh.visible = true;
-      if (labelMesh) labelMesh.visible = true;
-      if (label) label.visible = true;
     }
 
     // 2 & 3. Simulación visual del agujero central de la tapa
@@ -3131,20 +2626,6 @@ if (uncapBtn) {
           capBottomRecessMaterial.opacity = 0;
           capBottomRecessMesh.visible = false;
         }
-        if (simulatedCapTopRing) {
-          simulatedCapTopRing.visible = false;
-        }
-        if (simulatedCapTopGroove) {
-          simulatedCapTopGroove.visible = false;
-        }
-        if (simulatedCapUndersideCavity) {
-          simulatedCapUndersideCavity.visible = false;
-          simulatedCapUndersideCavity.material.opacity = 0;
-        }
-        if (simulatedCapUndersideRing) {
-          simulatedCapUndersideRing.visible = false;
-          simulatedCapUndersideRing.material.opacity = 0;
-        }
       },
     });
 
@@ -3159,27 +2640,6 @@ if (uncapBtn) {
       duration: 1.1,
       ease: 'power3.inOut',
     }, 0)
-
-    // Desvanecer gradualmente el aro y hendidura superior (duración 0.20s)
-    .to([simulatedCapTopRing.material, simulatedCapTopGroove.material], {
-      opacity: 0,
-      duration: 0.20,
-      ease: 'power2.out',
-      onComplete: () => {
-        simulatedCapTopRing.visible = false;
-        simulatedCapTopGroove.visible = false;
-      },
-    }, 0)
-
-    // Mostrar gradualmente la cavidad inferior en la cara oculta de la tapa mientras asciende
-    .set([simulatedCapUndersideCavity, simulatedCapUndersideRing], {
-      visible: true,
-    }, 0.20)
-    .to([simulatedCapUndersideCavity.material, simulatedCapUndersideRing.material], {
-      opacity: 1,
-      duration: 0.35,
-      ease: 'power2.out',
-    }, 0.22)
 
     // 2. Tapa arriba: el pulsador baja
     .to(pulsadorGroup.position, {
@@ -3248,33 +2708,7 @@ if (uncapBtn) {
       value: 0.0,
       duration: 1.05,
       ease: 'power3.inOut',
-    }, 'capReturn')
-
-    // Ocultar cavidad inferior justo antes del cierre
-    .to([simulatedCapUndersideCavity.material, simulatedCapUndersideRing.material], {
-      opacity: 0,
-      duration: 0.25,
-      ease: 'power2.in',
-      onComplete: () => {
-        simulatedCapUndersideCavity.visible = false;
-        simulatedCapUndersideRing.visible = false;
-      },
-    }, 'capReturn+=0.75')
-
-    // Restaurar progresivamente el aro y hendidura superior al asentarse la tapa
-    .set([simulatedCapTopRing, simulatedCapTopGroove], {
-      visible: true,
-    }, 'capReturn+=0.80')
-    .to(simulatedCapTopRing.material, {
-      opacity: 1,
-      duration: 0.25,
-      ease: 'power2.out',
-    }, 'capReturn+=0.80')
-    .to(simulatedCapTopGroove.material, {
-      opacity: 0.9,
-      duration: 0.25,
-      ease: 'power2.out',
-    }, 'capReturn+=0.80');
+    }, 'capReturn');
   });
 }
 
@@ -3320,8 +2754,6 @@ const bottleWorldPosition = new THREE.Vector3();
 const cameraDirection = new THREE.Vector3();
 const bottleWorldNormal = new THREE.Vector3();
 const bottleWorldQuaternion = new THREE.Quaternion();
-const bottleRightNormal = new THREE.Vector3();
-const bottleLeftNormal = new THREE.Vector3();
 const bottleUpNormal = new THREE.Vector3();
 
 // Loop de animación principal único (sin bucles duplicados)
@@ -3374,83 +2806,12 @@ function animate() {
     bottleGroup.getWorldPosition(bottleWorldPosition);
     bottleGroup.getWorldQuaternion(bottleWorldQuaternion);
     bottleWorldNormal.set(0, 0, 1).applyQuaternion(bottleWorldQuaternion).normalize();
-    bottleRightNormal.set(1, 0, 0).applyQuaternion(bottleWorldQuaternion).normalize();
-    bottleLeftNormal.set(-1, 0, 0).applyQuaternion(bottleWorldQuaternion).normalize();
     bottleUpNormal.set(0, 1, 0).applyQuaternion(bottleWorldQuaternion).normalize();
 
     cameraDirection.subVectors(camera.position, bottleWorldPosition).normalize();
 
     const rawFacing = bottleWorldNormal.dot(cameraDirection);
     const facing = Number.isFinite(rawFacing) ? rawFacing : 1;
-
-    const frontOpacity = THREE.MathUtils.smoothstep(
-      facing,
-      0.10,
-      0.68
-    );
-
-    const backOpacity = THREE.MathUtils.smoothstep(
-      -facing,
-      0.10,
-      0.68
-    );
-
-    const rawRightFacing = bottleRightNormal.dot(cameraDirection);
-    const rightFacing = Number.isFinite(rawRightFacing) ? rawRightFacing : 0;
-
-    const rawLeftFacing = bottleLeftNormal.dot(cameraDirection);
-    const leftFacing = Number.isFinite(rawLeftFacing) ? rawLeftFacing : 0;
-
-    // 9. Transición suave basada en el producto punto entre la cámara y las normales laterales (0.25 a 0.82)
-    const rightOpacity = THREE.MathUtils.smoothstep(rightFacing, 0.25, 0.82);
-    const leftOpacity = THREE.MathUtils.smoothstep(leftFacing, 0.25, 0.82);
-
-    const isUsingBodyMultiview =
-      USE_BODY_MULTIVIEW_SHADER &&
-      bodyMultiviewMaterial &&
-      cuerpoMesh &&
-      cuerpoMesh.material === bodyMultiviewMaterial;
-
-    if (isUsingBodyMultiview) {
-      if (bodyFrontPhotoProjection) bodyFrontPhotoProjection.visible = false;
-      if (bodyBackPhotoProjection) bodyBackPhotoProjection.visible = false;
-      if (bodyRightPhotoProjection) bodyRightPhotoProjection.visible = false;
-      if (bodyLeftPhotoProjection) bodyLeftPhotoProjection.visible = false;
-    } else {
-      if (bodyFrontPhotoMaterial) bodyFrontPhotoMaterial.opacity = frontOpacity;
-      if (bodyBackPhotoMaterial) bodyBackPhotoMaterial.opacity = backOpacity;
-      if (bodyRightPhotoMaterial) bodyRightPhotoMaterial.opacity = rightOpacity;
-      if (bodyLeftPhotoMaterial) bodyLeftPhotoMaterial.opacity = leftOpacity;
-
-      if (bodyFrontPhotoProjection) bodyFrontPhotoProjection.visible = frontOpacity > 0.01;
-      if (bodyBackPhotoProjection) bodyBackPhotoProjection.visible = backOpacity > 0.01;
-      if (bodyRightPhotoProjection) bodyRightPhotoProjection.visible = rightOpacity > 0.01;
-      if (bodyLeftPhotoProjection) bodyLeftPhotoProjection.visible = leftOpacity > 0.01;
-    }
-
-    const isUsingCapMultiview =
-      USE_CAP_MULTIVIEW_SHADER &&
-      capMultiviewMaterial &&
-      tapaMesh &&
-      tapaMesh.material === capMultiviewMaterial;
-
-    if (isUsingCapMultiview) {
-      if (capFrontPhotoProjection) capFrontPhotoProjection.visible = false;
-      if (capBackPhotoProjection) capBackPhotoProjection.visible = false;
-      if (capRightPhotoProjection) capRightPhotoProjection.visible = false;
-      if (capLeftPhotoProjection) capLeftPhotoProjection.visible = false;
-    } else {
-      if (capFrontPhotoMaterial) capFrontPhotoMaterial.opacity = frontOpacity;
-      if (capBackPhotoMaterial) capBackPhotoMaterial.opacity = backOpacity;
-      if (capFrontPhotoProjection) capFrontPhotoProjection.visible = frontOpacity > 0.01;
-      if (capBackPhotoProjection) capBackPhotoProjection.visible = backOpacity > 0.01;
-
-      if (capRightPhotoMaterial) capRightPhotoMaterial.opacity = rightOpacity;
-      if (capRightPhotoProjection) capRightPhotoProjection.visible = rightOpacity > 0.01;
-
-      if (capLeftPhotoMaterial) capLeftPhotoMaterial.opacity = leftOpacity;
-      if (capLeftPhotoProjection) capLeftPhotoProjection.visible = leftOpacity > 0.01;
-    }
 
     // Manguera interna: visibilidad independiente que permanece visible dentro del cuerpo
     if (dipTubeGroup && dipTubeMaterial) {
