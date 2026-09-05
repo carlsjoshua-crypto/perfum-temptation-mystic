@@ -189,8 +189,21 @@ let tapaMesh = null;
 let cuelloMesh = null;
 let atomizerGroup = null;
 let pulsadorGroup = null;
+let buttonMesh = null;
+let nozzleOuterMesh = null;
 let sprayPinholeMesh = null;
 let atomizerAccentLight = null;
+
+// Calibración de proporciones del pulsador: Estado sellado (al ras de la tapa) vs Estado compacto (foto de referencia)
+const ATOMIZER_SEALED = {
+  buttonScaleY: 1.0,
+  nozzleY: 0.0098, // Cota de reposo que sitúa el tope a Y = 0.0598 m (al ras del orificio exterior Y = 0.0600 m)
+};
+
+const ATOMIZER_COMPACT = {
+  buttonScaleY: 0.65, // Reduce la altura visible a ~9.6 mm sobre el anillo toroidal (~5.2 mm de reducción achatada)
+  nozzleY: 0.0065,    // Centrado proporcional en la pared cilíndrica del pulsador compacto
+};
 
 // Elementos de la simulación del agujero central de la tapa
 let capRecessGroup = null;
@@ -1432,7 +1445,7 @@ function tryInitCapMultiviewShader(tMesh, tBox, lBox, lSize) {
         transmission: 0.0,
         transparent: false,
         opacity: 1.0,
-        side: THREE.FrontSide,
+        side: THREE.DoubleSide,
         toneMapped: true,
       });
 
@@ -1519,176 +1532,42 @@ vec4 sampleCapPhoto(sampler2D tex, vec2 uv) {
 vec3 normPos = (vCapLocalPos - uCapLocalBoxMin) / uCapLocalBoxSize;
 
 // -------------------------------------------------------------
-// 1. Proyección frontal (+Z) con paralaje, compresión y oclusión
+// 1. Proyección frontal (+Z): cristal limpio sin cavidad oscura falsa
 // -------------------------------------------------------------
 vec2 uvFront = vec2(
   (normPos.x - 0.5) / 1.085 + 0.5,
   (normPos.y - 0.5) / 0.94 + 0.46
 );
-
-// Fondo cristal limpio exterior frontal completamente fijo
 vec4 colBgFront = sampleCapPhoto(uCapCleanFront, uvFront);
-
-// Centro móvil anclado al eje proyectado del atomizador con gradiente vertical de refracción óptica
-float anchorYFront = mix(1.0, 0.82, smoothstep(0.06, 0.85, uvFront.y));
-float movingCenterXFront = 0.5 + uCapParallaxShiftFront * anchorYFront;
-
-float deltaFront = uvFront.x - movingCenterXFront;
-float shiftDirFront = sign(uCapParallaxShiftFront);
-float shiftMagnitudeFront = abs(uCapParallaxShiftFront);
-float shiftProgFront = clamp(shiftMagnitudeFront / 0.24, 0.0, 1.0);
-
-// Deformación asimétrica:
-// Estira suavemente el lado orientado hacia el atomizador y comprime el lado contrario
-float compressScaleFront = mix(1.0, 0.38, shiftProgFront);
-float stretchScaleFront  = mix(1.0, 1.35, shiftProgFront);
-
-float sideFactorFront = smoothstep(-0.04, 0.04, deltaFront * shiftDirFront);
-float localWidthScaleFront = mix(stretchScaleFront, compressScaleFront, sideFactorFront);
-
-float compressedXFront = 0.5 + deltaFront / max(localWidthScaleFront, 0.05);
-vec2 uvFrontMoving = vec2(compressedXFront, uvFront.y);
-
-// Muestreo con coordenadas móviles conjuntas
-vec4 origFrontMoving = sampleCapPhoto(uCapOrigFront, uvFrontMoving);
-vec4 cleanFrontMoving = sampleCapPhoto(uCapCleanFront, uvFrontMoving);
-
-// Aislamiento diferencial del mecanismo interior
-float diffFront = length(origFrontMoving.rgb - cleanFrontMoving.rgb);
-float diffMaskFront = smoothstep(0.065, 0.19, diffFront);
-
-// Máscara espacial limitada estrictamente al corredor interior del mecanismo
-float spatialMaskXFront = 1.0 - smoothstep(0.13, 0.185, abs(uvFrontMoving.x - 0.5));
-float spatialMaskYFront = smoothstep(0.04, 0.11, uvFrontMoving.y) * (1.0 - smoothstep(0.85, 0.94, uvFrontMoving.y));
-float spatialFront = spatialMaskXFront * spatialMaskYFront;
-
-// Coordinación de oclusión angular y oclusión de borde por espesor del cristal (desaparece antes del bisel)
-float occEdgeFront = 1.0 - smoothstep(0.18, 0.29, shiftMagnitudeFront);
-float occAngularFront = 1.0 - smoothstep(0.55, 0.88, uCapLateralProgressFront);
-float occOpacityFront = occEdgeFront * occAngularFront * (1.0 - clamp(uCapCleanMix, 0.0, 1.0));
-
-float mechMaskFront = diffMaskFront * spatialFront * occOpacityFront;
-
-// Oscurecimiento y tinte rubí al aproximarse a los laterales
-float tintFactorFront = clamp(
-  smoothstep(0.08, 0.25, shiftMagnitudeFront) * 0.65 +
-  smoothstep(0.15, 0.75, uCapLateralProgressFront) * 0.35,
-  0.0, 1.0
-);
-vec3 mechColorFront = origFrontMoving.rgb * mix(1.0, 0.40, tintFactorFront);
-mechColorFront = mix(mechColorFront, uBaseRuby * 1.15, tintFactorFront * 0.65);
-
-// Composición frontal: fondo limpio fijo + única silueta móvil
-vec4 colFront;
-colFront.rgb = mix(colBgFront.rgb, mechColorFront, mechMaskFront);
-colFront.a = colBgFront.a;
+vec4 colFront = colBgFront;
 
 // -------------------------------------------------------------
-// 2. Proyección posterior (-Z) con paralaje, compresión y oclusión
+// 2. Proyección posterior (-Z): cristal limpio sin cavidad oscura falsa
 // -------------------------------------------------------------
 vec2 uvBack = vec2(
   1.0 - ((normPos.x - 0.5) / 1.085 + 0.5),
   (normPos.y - 0.5) / 0.94 + 0.46
 );
-
-// Fondo cristal limpio exterior posterior completamente fijo
 vec4 colBgBack = sampleCapPhoto(uCapCleanBack, uvBack);
-
-// Centro móvil posterior anclado al eje proyectado del atomizador
-float anchorYBack = mix(1.0, 0.82, smoothstep(0.06, 0.85, uvBack.y));
-float movingCenterXBack = 0.5 + uCapParallaxShiftBack * anchorYBack;
-
-float deltaBack = uvBack.x - movingCenterXBack;
-float shiftDirBack = sign(uCapParallaxShiftBack);
-float shiftMagnitudeBack = abs(uCapParallaxShiftBack);
-float shiftProgBack = clamp(shiftMagnitudeBack / 0.24, 0.0, 1.0);
-
-float compressScaleBack = mix(1.0, 0.38, shiftProgBack);
-float stretchScaleBack  = mix(1.0, 1.35, shiftProgBack);
-
-float sideFactorBack = smoothstep(-0.04, 0.04, deltaBack * shiftDirBack);
-float localWidthScaleBack = mix(stretchScaleBack, compressScaleBack, sideFactorBack);
-
-float compressedXBack = 0.5 + deltaBack / max(localWidthScaleBack, 0.05);
-vec2 uvBackMoving = vec2(compressedXBack, uvBack.y);
-
-// Muestreo con coordenadas móviles conjuntas
-vec4 origBackMoving = sampleCapPhoto(uCapOrigBack, uvBackMoving);
-vec4 cleanBackMoving = sampleCapPhoto(uCapCleanBack, uvBackMoving);
-
-// Aislamiento diferencial del mecanismo posterior
-float diffBack = length(origBackMoving.rgb - cleanBackMoving.rgb);
-float diffMaskBack = smoothstep(0.065, 0.19, diffBack);
-
-// Máscara espacial interior posterior
-float spatialMaskXBack = 1.0 - smoothstep(0.13, 0.185, abs(uvBackMoving.x - 0.5));
-float spatialMaskYBack = smoothstep(0.04, 0.11, uvBackMoving.y) * (1.0 - smoothstep(0.85, 0.94, uvBackMoving.y));
-float spatialBack = spatialMaskXBack * spatialMaskYBack;
-
-// Coordinación de oclusión angular y oclusión de borde posterior
-float occEdgeBack = 1.0 - smoothstep(0.18, 0.29, shiftMagnitudeBack);
-float occAngularBack = 1.0 - smoothstep(0.55, 0.88, uCapLateralProgressBack);
-float occOpacityBack = occEdgeBack * occAngularBack * (1.0 - clamp(uCapCleanMix, 0.0, 1.0));
-
-float mechMaskBack = diffMaskBack * spatialBack * occOpacityBack;
-
-// Oscurecimiento y tinte rubí posterior
-float tintFactorBack = clamp(
-  smoothstep(0.08, 0.25, shiftMagnitudeBack) * 0.65 +
-  smoothstep(0.15, 0.75, uCapLateralProgressBack) * 0.35,
-  0.0, 1.0
-);
-vec3 mechColorBack = origBackMoving.rgb * mix(1.0, 0.40, tintFactorBack);
-mechColorBack = mix(mechColorBack, uBaseRuby * 1.15, tintFactorBack * 0.65);
-
-// Composición posterior: fondo limpio fijo + única silueta móvil
-vec4 colBack;
-colBack.rgb = mix(colBgBack.rgb, mechColorBack, mechMaskBack);
-colBack.a = colBgBack.a;
+vec4 colBack = colBgBack;
 
 // -------------------------------------------------------------
-// 3. Proyección lateral derecha (+X) con entrada coordinada
+// 3. Proyección lateral derecha (+X): lateral limpio sin cavidad falsa
 // -------------------------------------------------------------
 vec2 uvRight = vec2(
   1.0 - ((normPos.z - 0.5) / 1.095 + 0.5),
   (normPos.y - 0.5) / 0.98 + 0.5
 );
-vec4 capSideClosedColor = sampleCapPhoto(uCapSideClosedRight, uvRight);
-vec4 capSideCleanColor  = sampleCapPhoto(uCapSideCleanRight, uvRight);
-
-// Control de entrada lateral: impide mecanismo lateral antes de que frente/dorso se apaguen
-float maxLateralProg = max(uCapLateralProgressFront, uCapLateralProgressBack);
-float sideMechEntry = smoothstep(0.70, 0.92, maxLateralProg);
-vec4 sideRightActive = mix(
-  capSideCleanColor,
-  capSideClosedColor,
-  sideMechEntry * (1.0 - clamp(uCapCleanMix, 0.0, 1.0))
-);
-vec4 sideRightColor = mix(
-  sideRightActive,
-  capSideCleanColor,
-  clamp(uCapCleanMix, 0.0, 1.0)
-);
+vec4 sideRightColor = sampleCapPhoto(uCapSideCleanRight, uvRight);
 
 // -------------------------------------------------------------
-// 4. Proyección lateral izquierda (-X) con entrada coordinada
+// 4. Proyección lateral izquierda (-X): lateral limpio sin cavidad falsa
 // -------------------------------------------------------------
 vec2 uvLeft = vec2(
   ((normPos.z - 0.5) / 1.095 + 0.5),
   (normPos.y - 0.5) / 0.98 + 0.5
 );
-vec4 capSideClosedMirroredColor = sampleCapPhoto(uCapSideClosedLeft, uvLeft);
-vec4 capSideCleanMirroredColor  = sampleCapPhoto(uCapSideCleanLeft, uvLeft);
-vec4 sideLeftActive = mix(
-  capSideCleanMirroredColor,
-  capSideClosedMirroredColor,
-  sideMechEntry * (1.0 - clamp(uCapCleanMix, 0.0, 1.0))
-);
-vec4 sideLeftColor = mix(
-  sideLeftActive,
-  capSideCleanMirroredColor,
-  clamp(uCapCleanMix, 0.0, 1.0)
-);
+vec4 sideLeftColor = sampleCapPhoto(uCapSideCleanLeft, uvLeft);
 
 // -------------------------------------------------------------
 // 5. Pesos según normales locales para mezcla suave en curvaturas
@@ -1907,10 +1786,22 @@ function buildProceduralAtomizer() {
   ringMesh.renderOrder = 4;
   group.add(ringMesh);
 
+  // Anillo intermedio abombado toroidal (atomizerBevelRing) entre el collar y el pulsador
+  const torusRadius = 0.0098; // Radio mayor
+  const torusTube = 0.0015;   // Grosor del tubo (diámetro 3 mm)
+  const torusGeo = new THREE.TorusGeometry(torusRadius, torusTube, 20, 64);
+  torusGeo.rotateX(Math.PI / 2); // Orientación horizontal plana
+  torusGeo.computeVertexNormals();
+  const torusMesh = new THREE.Mesh(torusGeo, atomizerPieceMaterial);
+  torusMesh.name = 'atomizerBevelRing';
+  torusMesh.position.set(0, 0.0430, 0); // Asentado sobre el tope del collar
+  torusMesh.renderOrder = 4;
+  group.add(torusMesh);
+
   // Grupo del pulsador móvil (cabeza presionable)
   pulsadorGroup = new THREE.Group();
   pulsadorGroup.name = 'pulsadorGroup';
-  pulsadorGroup.position.set(0, 0.0430, 0); // Separación mínima y realista de 0.5 mm sobre el anillo
+  pulsadorGroup.position.set(0, 0.0450, 0); // Asentado sobre el nuevo anillo
   pulsadorGroup.renderOrder = 4;
 
   // b) Pulsador superior cilíndrico más estrecho con bisel suave en el borde superior
@@ -1918,18 +1809,18 @@ function buildProceduralAtomizer() {
   // para garantizar normales 100% exteriores, tapa superior y pared lateral completas
   const buttonRadius = 0.0083; // Diámetro exterior 0.0166 m (proporción anillo/pulsador = 1.398 ~ 1.40)
   const buttonPoints = [
-    new THREE.Vector2(0.0001, -0.0025),              // Centro de la base inferior (tapa inferior cerrada)
-    new THREE.Vector2(buttonRadius, -0.0025),        // Borde inferior del faldón dentro del anillo
-    new THREE.Vector2(buttonRadius, 0.0094),         // Pared cilíndrica recta exterior (360°)
-    new THREE.Vector2(0.0081, 0.0097),               // Bisel redondeado superior 1
-    new THREE.Vector2(0.0078, 0.0099),               // Bisel redondeado superior 2
-    new THREE.Vector2(0.0074, 0.0100),               // Borde exterior plano de la tapa superior
-    new THREE.Vector2(0.0001, 0.0100),               // Centro de la tapa superior (tapa superior cerrada)
+    new THREE.Vector2(0.0001, -0.0035),              // Centro de la base inferior (oculta dentro del toroide y collar)
+    new THREE.Vector2(buttonRadius, -0.0035),        // Borde inferior del faldón dentro del anillo
+    new THREE.Vector2(buttonRadius, 0.0142),         // Pared cilíndrica recta exterior extendida
+    new THREE.Vector2(0.0081, 0.0145),               // Bisel redondeado superior 1
+    new THREE.Vector2(0.0078, 0.0147),               // Bisel redondeado superior 2
+    new THREE.Vector2(0.0074, 0.0148),               // Borde exterior plano de la tapa superior
+    new THREE.Vector2(0.0001, 0.0148),               // Centro de la tapa superior (tope a 0.0450 + 0.0148 = 0.0598 m)
   ];
 
   const buttonGeo = new THREE.LatheGeometry(buttonPoints, 64);
   buttonGeo.computeVertexNormals();
-  const buttonMesh = new THREE.Mesh(buttonGeo, atomizerPieceMaterial);
+  buttonMesh = new THREE.Mesh(buttonGeo, atomizerPieceMaterial);
   buttonMesh.name = 'atomizerButton';
   buttonMesh.renderOrder = 4;
   pulsadorGroup.add(buttonMesh);
@@ -1938,9 +1829,9 @@ function buildProceduralAtomizer() {
   const nozzleOuterGeo = new THREE.CylinderGeometry(0.0011, 0.0011, 0.0006, 32);
   nozzleOuterGeo.rotateX(Math.PI / 2);
   nozzleOuterGeo.computeVertexNormals();
-  const nozzleOuterMesh = new THREE.Mesh(nozzleOuterGeo, atomizerPieceMaterial);
+  nozzleOuterMesh = new THREE.Mesh(nozzleOuterGeo, atomizerPieceMaterial);
   nozzleOuterMesh.name = 'sprayNozzleOuter';
-  nozzleOuterMesh.position.set(0, 0.0066, buttonRadius + 0.00015);
+  nozzleOuterMesh.position.set(0, ATOMIZER_SEALED.nozzleY, buttonRadius + 0.00015);
   nozzleOuterMesh.renderOrder = 4;
   pulsadorGroup.add(nozzleOuterMesh);
 
@@ -1950,7 +1841,7 @@ function buildProceduralAtomizer() {
   const pinholeMat = new THREE.MeshBasicMaterial({ color: 0x040404 });
   sprayPinholeMesh = new THREE.Mesh(pinholeGeo, pinholeMat);
   sprayPinholeMesh.name = 'sprayPinhole';
-  sprayPinholeMesh.position.set(0, 0.0066, buttonRadius + 0.00025);
+  sprayPinholeMesh.position.set(0, ATOMIZER_SEALED.nozzleY, buttonRadius + 0.00025);
   sprayPinholeMesh.renderOrder = 4;
   pulsadorGroup.add(sprayPinholeMesh);
 
@@ -1959,25 +1850,12 @@ function buildProceduralAtomizer() {
 }
 
 // ==========================================================================
-// 10. Simulación Visual del Agujero Central de la Tapa (Colores Phong)
+// 10. Simulación Visual del Agujero Central de la Tapa (Desactivado para modelo perforado)
 // ==========================================================================
 function buildSimulatedCapHole(targetCapGroup, capMesh) {
-  // Calcular bounding box real de la tapa para situar los elementos con exactitud
-  const tapaBox = new THREE.Box3().setFromObject(capMesh);
-  const capTopY = tapaBox.max.y;
-  const capBottomY = tapaBox.min.y;
-  const capCenter = tapaBox.getCenter(new THREE.Vector3());
-
-  console.group('🔍 [Tapa] Bounding Box y Cotas para Simulación de Agujero');
-  console.log(`Cota Superior (capTopY): ${capTopY.toFixed(5)} m`);
-  console.log(`Cota Inferior (capBottomY): ${capBottomY.toFixed(5)} m`);
-  console.log(`Centro Horizontal: x=${capCenter.x.toFixed(5)}, z=${capCenter.z.toFixed(5)}`);
-  console.log(`Altura total de tapa: ${(capTopY - capBottomY).toFixed(5)} m`);
-  console.groupEnd();
-
-  // Simulación del hueco superior de la tapa:
-  // capRecessShadowMesh crea la profundidad oscura.
-  // capInsetAtomizerDisk simula la cara dorada apenas hundida.
+  // Desactivado: El modelo 3D 'temptation-mystic-perforado.glb' cuenta con la perforación geométrica real.
+  // Ya no se requiere superponer discos, anillos ni cavidades procedimentales oscuras.
+  return;
   const recessRadius = 0.00750; // Diámetro exterior de la cavidad (0.0150 m)
   const diskRadius = 0.00695;   // Diámetro interior del disco dorado (0.0139 m)
   const recessElevationY = capTopY + 0.00008; // Cota base sobre la superficie de la tapa
@@ -2555,7 +2433,7 @@ function calculateResponsiveCameraDistance() {
 // ==========================================================================
 // Carga del Modelo GLB e Inicialización
 // ==========================================================================
-const MODEL_PATH = './assets/models/temptation-mystic-parts-web.glb';
+const MODEL_PATH = './assets/models/temptation-mystic-perforado.glb';
 const loader = new GLTFLoader();
 
 loader.load(
@@ -2604,10 +2482,13 @@ loader.load(
     cuelloMesh.geometry.deleteAttribute('normal');
     cuelloMesh.geometry.computeVertexNormals();
 
-    const box = new THREE.Box3().setFromObject(modelRoot);
-    const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3());
-    modelRoot.position.sub(center);
+    // Centrado de referencia vertical y horizontal anclado al cuerpo y cuello del frasco
+    const cuerpoBoxRaw = new THREE.Box3().setFromObject(cuerpoMesh);
+    const cuerpoCenterRaw = cuerpoBoxRaw.getCenter(new THREE.Vector3());
+    // Altura total del frasco ensamblado: 0.12 m (desde la base del cuerpo en Y=0 hasta la cima de la tapa en Y=0.12)
+    // El centro geométrico ensamblado corresponde a Y = 0.06 m sobre la base
+    const targetModelCenter = new THREE.Vector3(cuerpoCenterRaw.x, cuerpoBoxRaw.min.y + 0.0600, cuerpoCenterRaw.z);
+    modelRoot.position.sub(targetModelCenter);
     modelRoot.updateMatrixWorld(true);
 
     bottleGroup = new THREE.Group();
@@ -2621,9 +2502,22 @@ loader.load(
     capGroup.name = 'capGroup';
     bottleGroup.add(capGroup);
     capGroup.attach(tapaMesh);
+
+    // Compensación espacial de la tapa: alinear con la cota de referencia original (centro Y = 0.05162 m / cima Y = 0.0600 m)
+    const currentTapaCenter = new THREE.Box3().setFromObject(tapaMesh).getCenter(new THREE.Vector3());
+    const desiredTapaCenter = new THREE.Vector3(0, 0.05162058, 0);
+    const capOffset = desiredTapaCenter.clone().sub(currentTapaCenter);
+    if (capOffset.lengthSq() > 0.00001) {
+      tapaMesh.position.add(capOffset);
+      tapaMesh.updateMatrixWorld(true);
+    }
     initialCapY = capGroup.position.y;
 
     bottleGroup.attach(cuelloMesh);
+    bottleGroup.updateMatrixWorld(true);
+
+    const box = new THREE.Box3().setFromObject(bottleGroup);
+    const size = box.getSize(new THREE.Vector3());
 
     // 4. El GLB debe añadirse y mostrarse antes de intentar crear la proyección
     scene.add(modelRoot);
@@ -2702,6 +2596,7 @@ loader.load(
           child.name === 'connectorLevel2' ||
           child.name === 'connectorLevel3' ||
           child.name === 'atomizerRing' ||
+          child.name === 'atomizerBevelRing' ||
           child.name === 'atomizerButton' ||
           child.name === 'sprayNozzleOuter'
         ) {
@@ -2738,8 +2633,8 @@ loader.load(
       cuerpoMesh.visible = true;
     }
 
-    // 2 & 3. Simulación visual del agujero central de la tapa
-    buildSimulatedCapHole(capGroup, tapaMesh);
+    // 2 & 3. Simulación visual del agujero central desactivada (el modelo perforado ya cuenta con orificio real)
+    // buildSimulatedCapHole(capGroup, tapaMesh);
 
     // 3, 4 y 5. Proyección fotográfica frontal de la tapa unida directamente a capGroup
     setupCapFrontPhotoProjection(capGroup, tapaMesh);
@@ -2833,7 +2728,7 @@ if (uncapBtn) {
 
     isAnimating = true;
     uncapBtn.disabled = true;
-    capMultiviewUniforms.uCapCleanMix.value = 0.0;
+    capMultiviewUniforms.uCapCleanMix.value = 1.0;
 
     initialCapY = capGroup.position.y;
     const initialPulsadorY = pulsadorGroup.position.y;
@@ -2843,44 +2738,41 @@ if (uncapBtn) {
         isAnimating = false;
         uncapBtn.disabled = false;
         sprayState.active = false;
-        capMultiviewUniforms.uCapCleanMix.value = 0.0;
+        capMultiviewUniforms.uCapCleanMix.value = 1.0;
         if (sprayPoints) sprayPoints.visible = false;
         if (screenMistOverlay) screenMistOverlay.style.opacity = '0';
-
-        // 4. Estado final cerrado garantizado: cavidad y disco dorado visibles
-        if (capInsetAtomizerDisk && capInsetAtomizerMaterial) {
-          capInsetAtomizerMaterial.opacity = 1.0;
-          capInsetAtomizerDisk.visible = true;
-        }
-        if (capTopHoleDarkDisk && capTopHoleDarkMaterial) {
-          capTopHoleDarkMaterial.opacity = 0.0;
-          capTopHoleDarkDisk.visible = false;
-        }
-        if (capRecessShadowMesh) {
-          capRecessShadowMesh.visible = true;
-          capRecessShadowMesh.material.opacity = 0.95;
-        }
-        if (capBottomRecessMesh && capBottomRecessMaterial) {
-          capBottomRecessMaterial.opacity = 0;
-          capBottomRecessMesh.visible = false;
-        }
+        if (buttonMesh) buttonMesh.scale.y = ATOMIZER_SEALED.buttonScaleY;
+        if (nozzleOuterMesh) nozzleOuterMesh.position.y = ATOMIZER_SEALED.nozzleY;
+        if (sprayPinholeMesh) sprayPinholeMesh.position.y = ATOMIZER_SEALED.nozzleY;
+        if (pulsadorGroup) pulsadorGroup.position.y = initialPulsadorY;
       },
     });
 
-    // 4. Inicio del destapado: la tapa sube y transiciona a la referencia limpia
+    // 1. Inicio del destapado: la tapa sube revelando el orificio real
     tl.to(capGroup.position, {
       y: initialCapY + 0.048,
       duration: 1.1,
       ease: 'power3.inOut',
-    }, 0)
-    .to(capMultiviewUniforms.uCapCleanMix, {
-      value: 1.0,
-      duration: 1.1,
-      ease: 'power3.inOut',
-    }, 0)
+    }, 0);
 
-    // 2. Tapa arriba: el pulsador baja
-    .to(pulsadorGroup.position, {
+    // 1b. Transición dinámica: el pulsador adopta suavemente la proporción compacta real de la foto
+    if (buttonMesh) {
+      tl.to(buttonMesh.scale, {
+        y: ATOMIZER_COMPACT.buttonScaleY,
+        duration: 0.5,
+        ease: 'power2.out',
+      }, 0);
+    }
+    if (nozzleOuterMesh && sprayPinholeMesh) {
+      tl.to([nozzleOuterMesh.position, sprayPinholeMesh.position], {
+        y: ATOMIZER_COMPACT.nozzleY,
+        duration: 0.5,
+        ease: 'power2.out',
+      }, 0);
+    }
+
+    // 2. Tapa arriba: el pulsador baja (pulsación ocurre sobre la altura compacta y realista)
+    tl.to(pulsadorGroup.position, {
       y: initialPulsadorY - 0.0030,
       duration: 0.22,
       ease: 'power2.in',
@@ -2936,17 +2828,29 @@ if (uncapBtn) {
     // Pausa de contemplación con atomizador al descubierto
     .to({}, { duration: 0.25 })
 
-    // 7. Retorno: la tapa desciende hacia su posición inicial y recupera la fotografía original
+    // 7. Retorno: la tapa desciende hacia su posición inicial cerrada
     .to(capGroup.position, {
       y: initialCapY,
       duration: 1.05,
       ease: 'power3.inOut',
-    }, 'capReturn')
-    .to(capMultiviewUniforms.uCapCleanMix, {
-      value: 0.0,
-      duration: 1.05,
-      ease: 'power3.inOut',
     }, 'capReturn');
+
+    // 7b. Al cerrar: interpolar el botón y boquilla de nuevo a su cota/escala de sellado al ras
+    // Con retardo de 0.70s y duración 0.35s para que la expansión ocurra 100% oculta bajo la falda de la tapa
+    if (buttonMesh) {
+      tl.to(buttonMesh.scale, {
+        y: ATOMIZER_SEALED.buttonScaleY,
+        duration: 0.35,
+        ease: 'power2.out',
+      }, 'capReturn+=0.70');
+    }
+    if (nozzleOuterMesh && sprayPinholeMesh) {
+      tl.to([nozzleOuterMesh.position, sprayPinholeMesh.position], {
+        y: ATOMIZER_SEALED.nozzleY,
+        duration: 0.35,
+        ease: 'power2.out',
+      }, 'capReturn+=0.70');
+    }
   });
 }
 
@@ -3166,43 +3070,6 @@ function animate() {
   }
 
   // Control dinámico sincronizado del disco simulado del atomizador y el hueco profundo superior
-  const cleanMixVal = capMultiviewUniforms ? THREE.MathUtils.clamp(capMultiviewUniforms.uCapCleanMix.value, 0.0, 1.0) : 0.0;
-
-  if (capInsetAtomizerDisk && capInsetAtomizerMaterial) {
-    const goldOpacity = 1.0 - cleanMixVal;
-    capInsetAtomizerMaterial.opacity = goldOpacity;
-    capInsetAtomizerDisk.visible = cleanMixVal <= 0.05 && goldOpacity > 0.01;
-  }
-
-  if (capTopHoleDarkDisk && capTopHoleDarkMaterial) {
-    const holeOpacity = cleanMixVal * 0.98;
-    capTopHoleDarkMaterial.opacity = holeOpacity;
-    capTopHoleDarkDisk.visible = cleanMixVal > 0.02 && holeOpacity > 0.01;
-  }
-
-  // Simulación independiente del hueco visto desde la cara inferior
-  // de la tapa cuando esta se encuentra levantada.
-  if (capGroup && capBottomRecessMesh && capBottomRecessMaterial) {
-    const capElevation = Math.max(0, capGroup.position.y - initialCapY);
-    const capLiftHeight = 0.048;
-    const capOpenProgress = THREE.MathUtils.clamp(capElevation / capLiftHeight, 0, 1);
-    const bottomFadeStart = 0.04;
-    const bottomFadeEnd = 0.22;
-    const bottomRecessOpacity = THREE.MathUtils.smoothstep(capOpenProgress, bottomFadeStart, bottomFadeEnd);
-
-    // Control según el lado de la cámara: visible únicamente con línea visual hacia la cara inferior
-    const bottomWorldPos = new THREE.Vector3();
-    capBottomRecessMesh.getWorldPosition(bottomWorldPos);
-    const dirToCam = camera.position.clone().sub(bottomWorldPos).normalize();
-    const capWorldQuat = new THREE.Quaternion();
-    capGroup.getWorldQuaternion(capWorldQuat);
-    const worldDown = new THREE.Vector3(0, -1, 0).applyQuaternion(capWorldQuat);
-    const isCameraBelow = worldDown.dot(dirToCam) > 0.02;
-
-    capBottomRecessMaterial.opacity = isCameraBelow ? bottomRecessOpacity : 0;
-    capBottomRecessMesh.visible = isCameraBelow && bottomRecessOpacity > 0.001;
-  }
-
   // 8 y 9. Transición frontal, posterior y lateral con normales del modelo
   if (bottleGroup) {
     bottleGroup.getWorldPosition(bottleWorldPosition);
