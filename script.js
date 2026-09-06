@@ -18,10 +18,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const bgOne = document.getElementById("bgOne");
   const bgTwo = document.getElementById("bgTwo");
-  const photoStage = document.getElementById("photoStage");
-  const productMain = document.getElementById("productMain");
-  const productExploded = document.getElementById("productExploded");
-  const sprayMist = document.getElementById("sprayMist");
+  // Elementos 2D retirados en Fase 1 (integración de WebGL Canvas)
+  // const photoStage = document.getElementById("photoStage");
+  // const productMain = document.getElementById("productMain");
+  // const productExploded = document.getElementById("productExploded");
+  // const sprayMist = document.getElementById("sprayMist");
   const card1 = document.getElementById("card1");
   const card2 = document.getElementById("card2");
   const scrollHint = document.getElementById("scrollHint");
@@ -106,7 +107,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function applyScrollScene(progress) {
     const backgroundSwap = smoothstep(0.1, 0.38, progress);
-    const productReveal = smoothstep(0.24, 0.62, progress);
     const finalReveal = smoothstep(0.68, 0.92, progress);
 
     // 1. Fondos Parallax
@@ -117,44 +117,7 @@ document.addEventListener("DOMContentLoaded", () => {
       bgTwo.style.transform = `scale(${1.11 - progress * 0.05}) translate3d(0, ${progress * -34}px, 0)`;
     }
 
-    // 2. Perfume Transformation (Product Real -> Exploded View)
-    if (productMain && productExploded) {
-      productMain.style.opacity = (1 - productReveal).toFixed(3);
-      productExploded.style.opacity = productReveal.toFixed(3);
-
-      productMain.style.transform = `
-        translate3d(${progress * -42}px, ${progress * 58}px, 0)
-        scale(${1 - productReveal * 0.16})
-        rotate(${progress * -2.5}deg)
-      `;
-
-      productExploded.style.transform = `
-        translate3d(${(1 - productReveal) * 52}px, ${(1 - productReveal) * -54}px, 0)
-        scale(${0.82 + productReveal * 0.23})
-        rotate(${(1 - productReveal) * 2.2}deg)
-      `;
-    }
-
-    if (photoStage) {
-      const drift = Math.sin(progress * Math.PI) * 16;
-      photoStage.style.transform = `translate3d(${drift}px, ${finalReveal * -30}px, 0)`;
-    }
-
-    // 3. SPRAY MIST — CSS Custom Properties driven
-    //    Timing: 0.38 sutil → 0.42-0.50 nace → 0.55-0.66 máximo → 0.66-0.72 hold → 0.72-0.86 fade
-    if (sprayMist) {
-      // Expansion progress (0→1): from first hint to full expansion
-      const sprayExpansion = smoothstep(0.38, 0.66, progress);
-
-      // Opacity envelope: fade in (0.38-0.45) → hold → fade out (0.72-0.86)
-      const sprayFadeIn = smoothstep(0.38, 0.45, progress);
-      const sprayFadeOut = smoothstep(0.72, 0.86, progress);
-      const sprayOpacity = sprayFadeIn * (1 - sprayFadeOut);
-
-      // Set CSS custom properties — the CSS does the rest
-      sprayMist.style.setProperty("--spray-progress", sprayExpansion.toFixed(4));
-      sprayMist.style.setProperty("--spray-opacity", sprayOpacity.toFixed(4));
-    }
+    // 2. Transición 3D (Se integrará en la siguiente fase de Scrollytelling)
 
     // 4. Tarjetas Informativas Narrativas
     if (card1 && card2) {
