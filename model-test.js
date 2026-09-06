@@ -137,7 +137,8 @@ const capMultiviewUniforms = {
   uCapLocalCenter: { value: new THREE.Vector3() },
   uHoleRadius: { value: 0.00750 },
   uDiskRadius: { value: 0.00695 },
-  uBaseRuby: { value: new THREE.Color(0x760019) },
+  uBaseRuby: { value: new THREE.Color('#6b0214') },
+  uParallax: { value: new THREE.Vector2(0, 0) },
   uCapParallaxShiftFront: { value: 0.0 },
   uCapParallaxShiftBack: { value: 0.0 },
   uCapLateralProgressFront: { value: 0.0 },
@@ -188,21 +189,36 @@ let neckLeftCanvasTexture = null;
 let tapaMesh = null;
 let cuelloMesh = null;
 let atomizerGroup = null;
+let ringMesh = null;
+let torusMesh = null;
 let pulsadorGroup = null;
 let buttonMesh = null;
 let nozzleOuterMesh = null;
 let sprayPinholeMesh = null;
 let atomizerAccentLight = null;
 
-// Calibración de proporciones del pulsador: Estado sellado (al ras de la tapa) vs Estado compacto (foto de referencia)
+// Calibración armónica del conjunto atomizador: Estado cerrado (tapa puesta) vs Estado compacto (destapado)
+// Redistribución de +5.18 mm: Collar +2.69 mm, Anillo +0.41 mm, Pulsador +2.08 mm
 const ATOMIZER_SEALED = {
-  buttonScaleY: 1.0,
-  nozzleY: 0.0098, // Cota de reposo que sitúa el tope a Y = 0.0598 m (al ras del orificio exterior Y = 0.0600 m)
+  ringScaleY: 15.79 / 13.10, // Collar de 13.10 mm a 15.79 mm (+2.69 mm)
+  ringY: 0.037295,           // Centrado de collar cerrado (base inmóvil en Y = 0.02940 m)
+  torusScaleY: 2.41 / 2.00,  // Anillo de 2.00 mm a 2.41 mm (+0.41 mm)
+  torusScaleXZ: 1.05,
+  torusY: 0.046395,          // Asentado sobre nuevo tope de collar (Y = 0.04519 m)
+  pulsadorGroupY: 0.04780,   // Asentado sobre nuevo tope de anillo (Y = 0.04760 m)
+  buttonScaleY: 1.0,         // Altura visible 12.20 mm (+2.08 mm sobre 10.12 mm)
+  nozzleY: 0.0068,           // Cima exacta en Y = 0.04780 + 0.01220 = 0.06000 m
 };
 
 const ATOMIZER_COMPACT = {
-  buttonScaleY: 0.65, // Reduce la altura visible a ~9.6 mm sobre el anillo toroidal (~5.2 mm de reducción achatada)
-  nozzleY: 0.0065,    // Centrado proporcional en la pared cilíndrica del pulsador compacto
+  ringScaleY: 1.0,           // Collar a su altura real de 13.10 mm
+  ringY: 0.03595,            // Centrado de collar compacto (base en Y = 0.02940 m)
+  torusScaleY: 1.0,          // Anillo a su espesor real de 2.00 mm
+  torusScaleXZ: 1.0,
+  torusY: 0.04350,           // Asentado sobre tope de collar compacto (Y = 0.04250 m)
+  pulsadorGroupY: 0.04450,   // Asentado sobre tope de anillo compacto (Y = 0.04450 m)
+  buttonScaleY: 10.12 / 12.20, // Altura visible compacta 10.12 mm (~0.8295)
+  nozzleY: 0.0056,           // Centrado proporcional en pared compacta
 };
 
 // Elementos de la simulación del agujero central de la tapa
@@ -247,17 +263,21 @@ const outerGlassMaterial = new THREE.MeshPhysicalMaterial({
 const previousOuterGlassMaterial = outerGlassMaterial;
 
 
-// 2. Material base de la tapa (MeshPhongMaterial rubí calibrado)
-const capMaterial = new THREE.MeshPhongMaterial({
-  color: 0x760019,
-  emissive: 0x180003,
-  emissiveIntensity: 0.28,
-  specular: 0xd73354,
-  shininess: 48,
-  transparent: false,
-  opacity: 1,
-  vertexColors: false,
-  side: THREE.FrontSide,
+// 2. Material base de la tapa (MeshPhysicalMaterial cristal acrílico rubí pulido de lujo)
+const capMaterial = new THREE.MeshPhysicalMaterial({
+  color: new THREE.Color('#6b0214'),
+  transmission: 0.0,
+  transparent: true,
+  opacity: 0.92,
+  depthWrite: true,
+  attenuationColor: new THREE.Color('#42000b'),
+  attenuationDistance: 0.020,
+  roughness: 0.10,
+  metalness: 0.03,
+  clearcoat: 1.0,
+  clearcoatRoughness: 0.04,
+  side: THREE.DoubleSide,
+  toneMapped: true,
 });
 
 // 7. Material dorado básico original (conservado para disco superior simulado de la tapa)
@@ -1436,15 +1456,17 @@ function tryInitCapMultiviewShader(tMesh, tBox, lBox, lSize) {
   try {
     if (!capMultiviewMaterial) {
       capMultiviewMaterial = new THREE.MeshPhysicalMaterial({
-        color: 0xffffff,
-        roughness: 0.18,
-        metalness: 0.04,
-        clearcoat: 0.85,
-        clearcoatRoughness: 0.10,
-        reflectivity: 0.65,
+        color: new THREE.Color('#6b0214'),
         transmission: 0.0,
-        transparent: false,
-        opacity: 1.0,
+        transparent: true,
+        opacity: 0.92,
+        depthWrite: true,
+        attenuationColor: new THREE.Color('#42000b'),
+        attenuationDistance: 0.020,
+        roughness: 0.10,
+        metalness: 0.03,
+        clearcoat: 1.0,
+        clearcoatRoughness: 0.04,
         side: THREE.DoubleSide,
         toneMapped: true,
       });
@@ -1468,6 +1490,7 @@ function tryInitCapMultiviewShader(tMesh, tBox, lBox, lSize) {
         shader.uniforms.uHoleRadius = capMultiviewUniforms.uHoleRadius;
         shader.uniforms.uDiskRadius = capMultiviewUniforms.uDiskRadius;
         shader.uniforms.uBaseRuby = capMultiviewUniforms.uBaseRuby;
+        shader.uniforms.uParallax = capMultiviewUniforms.uParallax;
         shader.uniforms.uCapParallaxShiftFront = capMultiviewUniforms.uCapParallaxShiftFront;
         shader.uniforms.uCapParallaxShiftBack = capMultiviewUniforms.uCapParallaxShiftBack;
         shader.uniforms.uCapLateralProgressFront = capMultiviewUniforms.uCapLateralProgressFront;
@@ -1513,6 +1536,7 @@ uniform vec3 uCapLocalCenter;
 uniform float uHoleRadius;
 uniform float uDiskRadius;
 uniform vec3 uBaseRuby;
+uniform vec2 uParallax;
 uniform float uCapParallaxShiftFront;
 uniform float uCapParallaxShiftBack;
 uniform float uCapLateralProgressFront;
@@ -1531,9 +1555,7 @@ vec4 sampleCapPhoto(sampler2D tex, vec2 uv) {
           `#include <color_fragment>
 vec3 normPos = (vCapLocalPos - uCapLocalBoxMin) / uCapLocalBoxSize;
 
-// -------------------------------------------------------------
 // 1. Proyección frontal (+Z): cristal limpio sin cavidad oscura falsa
-// -------------------------------------------------------------
 vec2 uvFront = vec2(
   (normPos.x - 0.5) / 1.085 + 0.5,
   (normPos.y - 0.5) / 0.94 + 0.46
@@ -1541,9 +1563,7 @@ vec2 uvFront = vec2(
 vec4 colBgFront = sampleCapPhoto(uCapCleanFront, uvFront);
 vec4 colFront = colBgFront;
 
-// -------------------------------------------------------------
 // 2. Proyección posterior (-Z): cristal limpio sin cavidad oscura falsa
-// -------------------------------------------------------------
 vec2 uvBack = vec2(
   1.0 - ((normPos.x - 0.5) / 1.085 + 0.5),
   (normPos.y - 0.5) / 0.94 + 0.46
@@ -1551,27 +1571,21 @@ vec2 uvBack = vec2(
 vec4 colBgBack = sampleCapPhoto(uCapCleanBack, uvBack);
 vec4 colBack = colBgBack;
 
-// -------------------------------------------------------------
 // 3. Proyección lateral derecha (+X): lateral limpio sin cavidad falsa
-// -------------------------------------------------------------
 vec2 uvRight = vec2(
   1.0 - ((normPos.z - 0.5) / 1.095 + 0.5),
   (normPos.y - 0.5) / 0.98 + 0.5
 );
 vec4 sideRightColor = sampleCapPhoto(uCapSideCleanRight, uvRight);
 
-// -------------------------------------------------------------
 // 4. Proyección lateral izquierda (-X): lateral limpio sin cavidad falsa
-// -------------------------------------------------------------
 vec2 uvLeft = vec2(
   ((normPos.z - 0.5) / 1.095 + 0.5),
   (normPos.y - 0.5) / 0.98 + 0.5
 );
 vec4 sideLeftColor = sampleCapPhoto(uCapSideCleanLeft, uvLeft);
 
-// -------------------------------------------------------------
 // 5. Pesos según normales locales para mezcla suave en curvaturas
-// -------------------------------------------------------------
 vec3 n = normalize(vCapLocalNormal);
 float wFront = max(0.0, n.z);
 float wBack  = max(0.0, -n.z);
@@ -1594,18 +1608,37 @@ vec3 blendedPhoto = cFront * weights.x +
                     cRight * weights.z +
                     cLeft  * weights.w;
 
-// -------------------------------------------------------------
 // 6. Superficie Superior e Inferior: Transición Suave con Rubí Base
-// -------------------------------------------------------------
 float horizFactor = smoothstep(0.92, 0.65, abs(n.y));
 vec3 finalCapColor = mix(uBaseRuby, blendedPhoto, horizFactor);
 
 diffuseColor.rgb = finalCapColor;
-diffuseColor.a = 1.0;`
+diffuseColor.a = 0.92;`
+        );
+
+        shader.fragmentShader = shader.fragmentShader.replace(
+          '#include <dithering_fragment>',
+          `#include <dithering_fragment>
+gl_FragColor.a = 0.92;`
         );
       };
     } else if (capMultiviewMaterial.userData && capMultiviewMaterial.userData.shader) {
+      capMultiviewMaterial.color.set('#6b0214');
+      capMultiviewMaterial.transmission = 0.0;
+      capMultiviewMaterial.transparent = true;
+      capMultiviewMaterial.opacity = 0.92;
+      capMultiviewMaterial.depthWrite = true;
+      capMultiviewMaterial.attenuationColor.set('#42000b');
+      capMultiviewMaterial.attenuationDistance = 0.020;
+      capMultiviewMaterial.roughness = 0.10;
+      capMultiviewMaterial.metalness = 0.03;
+      capMultiviewMaterial.clearcoat = 1.0;
+      capMultiviewMaterial.clearcoatRoughness = 0.04;
+      capMultiviewMaterial.side = THREE.DoubleSide;
+      capMultiviewMaterial.needsUpdate = true;
       const s = capMultiviewMaterial.userData.shader;
+      if (s.uniforms.uBaseRuby) s.uniforms.uBaseRuby.value = capMultiviewUniforms.uBaseRuby.value;
+      if (s.uniforms.uParallax) s.uniforms.uParallax.value.copy(capMultiviewUniforms.uParallax.value);
       if (s.uniforms.uCapOrigFront) s.uniforms.uCapOrigFront.value = capMultiviewUniforms.uCapOrigFront.value;
       if (s.uniforms.uCapOrigBack) s.uniforms.uCapOrigBack.value = capMultiviewUniforms.uCapOrigBack.value;
       if (s.uniforms.uCapCleanFront) s.uniforms.uCapCleanFront.value = capMultiviewUniforms.uCapCleanFront.value;
@@ -1626,6 +1659,7 @@ diffuseColor.a = 1.0;`
     }
 
     targetMesh.material = capMultiviewMaterial;
+    targetMesh.renderOrder = 5;
     targetMesh.material.needsUpdate = true;
 
     console.log('✨ [Shader Multivista] Tapa actualizada exitosamente con shader proyectivo en malla 3D.');
@@ -1780,48 +1814,49 @@ function buildProceduralAtomizer() {
 
   const ringGeo = new THREE.LatheGeometry(ringPoints, 64);
   ringGeo.computeVertexNormals();
-  const ringMesh = new THREE.Mesh(ringGeo, atomizerPieceMaterial);
+  ringMesh = new THREE.Mesh(ringGeo, atomizerPieceMaterial);
   ringMesh.name = 'atomizerRing';
-  ringMesh.position.set(0, 0.03595, 0); // Posición centrada entre Y = 0.0294 y 0.0425
+  ringMesh.position.set(0, ATOMIZER_SEALED.ringY, 0);
+  ringMesh.scale.set(1, ATOMIZER_SEALED.ringScaleY, 1);
   ringMesh.renderOrder = 4;
   group.add(ringMesh);
 
   // Anillo intermedio abombado toroidal (atomizerBevelRing) entre el collar y el pulsador
   const torusRadius = 0.0098; // Radio mayor
-  const torusTube = 0.0015;   // Grosor del tubo (diámetro 3 mm)
+  const torusTube = 0.0010;   // Grosor del tubo (altura base 2.0 mm)
   const torusGeo = new THREE.TorusGeometry(torusRadius, torusTube, 20, 64);
   torusGeo.rotateX(Math.PI / 2); // Orientación horizontal plana
   torusGeo.computeVertexNormals();
-  const torusMesh = new THREE.Mesh(torusGeo, atomizerPieceMaterial);
+  torusMesh = new THREE.Mesh(torusGeo, atomizerPieceMaterial);
   torusMesh.name = 'atomizerBevelRing';
-  torusMesh.position.set(0, 0.0430, 0); // Asentado sobre el tope del collar
+  torusMesh.position.set(0, ATOMIZER_SEALED.torusY, 0);
+  torusMesh.scale.set(ATOMIZER_SEALED.torusScaleXZ, ATOMIZER_SEALED.torusScaleY, ATOMIZER_SEALED.torusScaleXZ);
   torusMesh.renderOrder = 4;
   group.add(torusMesh);
 
   // Grupo del pulsador móvil (cabeza presionable)
   pulsadorGroup = new THREE.Group();
   pulsadorGroup.name = 'pulsadorGroup';
-  pulsadorGroup.position.set(0, 0.0450, 0); // Asentado sobre el nuevo anillo
+  pulsadorGroup.position.set(0, ATOMIZER_SEALED.pulsadorGroupY, 0);
   pulsadorGroup.renderOrder = 4;
 
-  // b) Pulsador superior cilíndrico más estrecho con bisel suave en el borde superior
-  // Geometría cilíndrica cerrada de 360°, con devanado ascendente (de base a tope)
-  // para garantizar normales 100% exteriores, tapa superior y pared lateral completas
+  // b) Pulsador superior cilíndrico (altura visible de 12.20 mm en estado cerrado, cima exacta en Y = 0.06000 m)
   const buttonRadius = 0.0083; // Diámetro exterior 0.0166 m (proporción anillo/pulsador = 1.398 ~ 1.40)
   const buttonPoints = [
     new THREE.Vector2(0.0001, -0.0035),              // Centro de la base inferior (oculta dentro del toroide y collar)
     new THREE.Vector2(buttonRadius, -0.0035),        // Borde inferior del faldón dentro del anillo
-    new THREE.Vector2(buttonRadius, 0.0142),         // Pared cilíndrica recta exterior extendida
-    new THREE.Vector2(0.0081, 0.0145),               // Bisel redondeado superior 1
-    new THREE.Vector2(0.0078, 0.0147),               // Bisel redondeado superior 2
-    new THREE.Vector2(0.0074, 0.0148),               // Borde exterior plano de la tapa superior
-    new THREE.Vector2(0.0001, 0.0148),               // Centro de la tapa superior (tope a 0.0450 + 0.0148 = 0.0598 m)
+    new THREE.Vector2(buttonRadius, 0.0116),         // Pared cilíndrica recta exterior (altura visible 12.20 mm)
+    new THREE.Vector2(0.0081, 0.0119),               // Bisel redondeado superior 1
+    new THREE.Vector2(0.0078, 0.0121),               // Bisel redondeado superior 2
+    new THREE.Vector2(0.0074, 0.0122),               // Borde exterior plano de la tapa superior
+    new THREE.Vector2(0.0001, 0.0122),               // Centro de la tapa superior (tope a 0.0478 + 0.0122 = 0.0600 m)
   ];
 
   const buttonGeo = new THREE.LatheGeometry(buttonPoints, 64);
   buttonGeo.computeVertexNormals();
   buttonMesh = new THREE.Mesh(buttonGeo, atomizerPieceMaterial);
   buttonMesh.name = 'atomizerButton';
+  buttonMesh.scale.set(1, ATOMIZER_SEALED.buttonScaleY, 1);
   buttonMesh.renderOrder = 4;
   pulsadorGroup.add(buttonMesh);
 
@@ -2551,9 +2586,10 @@ loader.load(
     const cuerpoCenter = cuerpoBox.getCenter(new THREE.Vector3());
     const cuerpoSize = cuerpoBox.getSize(new THREE.Vector3());
 
-    // 7. Tapa: cristal rojo oscuro y pulido con poca transmisión
+    // 7. Tapa: cristal acrílico rubí pulido
     tapaMesh.name = 'tapa';
     tapaMesh.material = capMaterial;
+    tapaMesh.renderOrder = 5;
 
     // Cuello dorado uniforme con acabado espejo oro champán (atomizerMirrorGoldMaterial)
     cuelloMesh.name = 'cuello';
@@ -2731,7 +2767,6 @@ if (uncapBtn) {
     capMultiviewUniforms.uCapCleanMix.value = 1.0;
 
     initialCapY = capGroup.position.y;
-    const initialPulsadorY = pulsadorGroup.position.y;
 
     const tl = gsap.timeline({
       onComplete: () => {
@@ -2741,10 +2776,18 @@ if (uncapBtn) {
         capMultiviewUniforms.uCapCleanMix.value = 1.0;
         if (sprayPoints) sprayPoints.visible = false;
         if (screenMistOverlay) screenMistOverlay.style.opacity = '0';
+        if (ringMesh) {
+          ringMesh.position.y = ATOMIZER_SEALED.ringY;
+          ringMesh.scale.y = ATOMIZER_SEALED.ringScaleY;
+        }
+        if (torusMesh) {
+          torusMesh.position.y = ATOMIZER_SEALED.torusY;
+          torusMesh.scale.set(ATOMIZER_SEALED.torusScaleXZ, ATOMIZER_SEALED.torusScaleY, ATOMIZER_SEALED.torusScaleXZ);
+        }
+        if (pulsadorGroup) pulsadorGroup.position.y = ATOMIZER_SEALED.pulsadorGroupY;
         if (buttonMesh) buttonMesh.scale.y = ATOMIZER_SEALED.buttonScaleY;
         if (nozzleOuterMesh) nozzleOuterMesh.position.y = ATOMIZER_SEALED.nozzleY;
         if (sprayPinholeMesh) sprayPinholeMesh.position.y = ATOMIZER_SEALED.nozzleY;
-        if (pulsadorGroup) pulsadorGroup.position.y = initialPulsadorY;
       },
     });
 
@@ -2755,7 +2798,24 @@ if (uncapBtn) {
       ease: 'power3.inOut',
     }, 0);
 
-    // 1b. Transición dinámica: el pulsador adopta suavemente la proporción compacta real de la foto
+    // 1b. Transición dinámica armónica: las 3 piezas adoptan suavemente sus proporciones compactas reales
+    if (ringMesh) {
+      tl.to(ringMesh.position, { y: ATOMIZER_COMPACT.ringY, duration: 0.5, ease: 'power2.out' }, 0);
+      tl.to(ringMesh.scale, { y: ATOMIZER_COMPACT.ringScaleY, duration: 0.5, ease: 'power2.out' }, 0);
+    }
+    if (torusMesh) {
+      tl.to(torusMesh.position, { y: ATOMIZER_COMPACT.torusY, duration: 0.5, ease: 'power2.out' }, 0);
+      tl.to(torusMesh.scale, {
+        x: ATOMIZER_COMPACT.torusScaleXZ,
+        y: ATOMIZER_COMPACT.torusScaleY,
+        z: ATOMIZER_COMPACT.torusScaleXZ,
+        duration: 0.5,
+        ease: 'power2.out',
+      }, 0);
+    }
+    if (pulsadorGroup) {
+      tl.to(pulsadorGroup.position, { y: ATOMIZER_COMPACT.pulsadorGroupY, duration: 0.5, ease: 'power2.out' }, 0);
+    }
     if (buttonMesh) {
       tl.to(buttonMesh.scale, {
         y: ATOMIZER_COMPACT.buttonScaleY,
@@ -2773,7 +2833,7 @@ if (uncapBtn) {
 
     // 2. Tapa arriba: el pulsador baja (pulsación ocurre sobre la altura compacta y realista)
     tl.to(pulsadorGroup.position, {
-      y: initialPulsadorY - 0.0030,
+      y: ATOMIZER_COMPACT.pulsadorGroupY - 0.0030,
       duration: 0.22,
       ease: 'power2.in',
       onComplete: () => {
@@ -2808,7 +2868,7 @@ if (uncapBtn) {
 
     // 5. El pulsador vuelve a subir
     .to(pulsadorGroup.position, {
-      y: initialPulsadorY,
+      y: ATOMIZER_COMPACT.pulsadorGroupY,
       duration: 0.32,
       ease: 'back.out(2)',
     }, 'sprayBurst+=0.15')
@@ -2835,8 +2895,25 @@ if (uncapBtn) {
       ease: 'power3.inOut',
     }, 'capReturn');
 
-    // 7b. Al cerrar: interpolar el botón y boquilla de nuevo a su cota/escala de sellado al ras
+    // 7b. Al cerrar: interpolar armónicamente las 3 piezas a su cota/escala de sellado
     // Con retardo de 0.70s y duración 0.35s para que la expansión ocurra 100% oculta bajo la falda de la tapa
+    if (ringMesh) {
+      tl.to(ringMesh.position, { y: ATOMIZER_SEALED.ringY, duration: 0.35, ease: 'power2.out' }, 'capReturn+=0.70');
+      tl.to(ringMesh.scale, { y: ATOMIZER_SEALED.ringScaleY, duration: 0.35, ease: 'power2.out' }, 'capReturn+=0.70');
+    }
+    if (torusMesh) {
+      tl.to(torusMesh.position, { y: ATOMIZER_SEALED.torusY, duration: 0.35, ease: 'power2.out' }, 'capReturn+=0.70');
+      tl.to(torusMesh.scale, {
+        x: ATOMIZER_SEALED.torusScaleXZ,
+        y: ATOMIZER_SEALED.torusScaleY,
+        z: ATOMIZER_SEALED.torusScaleXZ,
+        duration: 0.35,
+        ease: 'power2.out',
+      }, 'capReturn+=0.70');
+    }
+    if (pulsadorGroup) {
+      tl.to(pulsadorGroup.position, { y: ATOMIZER_SEALED.pulsadorGroupY, duration: 0.35, ease: 'power2.out' }, 'capReturn+=0.70');
+    }
     if (buttonMesh) {
       tl.to(buttonMesh.scale, {
         y: ATOMIZER_SEALED.buttonScaleY,
@@ -3053,10 +3130,40 @@ function updateCapParallax(immediate = false) {
   }
 
   if (capMultiviewUniforms) {
-    capMultiviewUniforms.uCapParallaxShiftFront.value = smoothShiftFront;
-    capMultiviewUniforms.uCapParallaxShiftBack.value = smoothShiftBack;
-    capMultiviewUniforms.uCapLateralProgressFront.value = smoothProgressFront;
-    capMultiviewUniforms.uCapLateralProgressBack.value = smoothProgressBack;
+    if (capMultiviewUniforms.uParallax?.value) {
+      capMultiviewUniforms.uParallax.value.set(smoothShiftFront, smoothShiftBack);
+    }
+    if (capMultiviewUniforms.uCapParallaxShiftFront) {
+      capMultiviewUniforms.uCapParallaxShiftFront.value = smoothShiftFront;
+    }
+    if (capMultiviewUniforms.uCapParallaxShiftBack) {
+      capMultiviewUniforms.uCapParallaxShiftBack.value = smoothShiftBack;
+    }
+    if (capMultiviewUniforms.uCapLateralProgressFront) {
+      capMultiviewUniforms.uCapLateralProgressFront.value = smoothProgressFront;
+    }
+    if (capMultiviewUniforms.uCapLateralProgressBack) {
+      capMultiviewUniforms.uCapLateralProgressBack.value = smoothProgressBack;
+    }
+  }
+
+  const uniforms = capMultiviewMaterial?.userData?.shader?.uniforms;
+  if (uniforms) {
+    if (uniforms.uParallax?.value) {
+      uniforms.uParallax.value.set(smoothShiftFront, smoothShiftBack);
+    }
+    if (uniforms.uCapParallaxShiftFront) {
+      uniforms.uCapParallaxShiftFront.value = smoothShiftFront;
+    }
+    if (uniforms.uCapParallaxShiftBack) {
+      uniforms.uCapParallaxShiftBack.value = smoothShiftBack;
+    }
+    if (uniforms.uCapLateralProgressFront) {
+      uniforms.uCapLateralProgressFront.value = smoothProgressFront;
+    }
+    if (uniforms.uCapLateralProgressBack) {
+      uniforms.uCapLateralProgressBack.value = smoothProgressBack;
+    }
   }
 }
 
