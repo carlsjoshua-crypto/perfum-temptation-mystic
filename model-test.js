@@ -8,6 +8,12 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import gsap from 'gsap';
 
+// Resolución canónica de rutas públicas en Dev y Producción (MPA)
+const BASE_PATH = (import.meta.env.BASE_URL || '/').endsWith('/')
+  ? (import.meta.env.BASE_URL || '/')
+  : `${import.meta.env.BASE_URL}/`;
+const getAssetUrl = (relPath) => `${BASE_PATH}${relPath.replace(/^\.?\//, '')}`;
+
 // ==========================================================================
 // 1. Configuración del Renderizador y Escena
 // ==========================================================================
@@ -18,8 +24,12 @@ const renderer = new THREE.WebGLRenderer({
   alpha: false,
   powerPreference: 'high-performance',
 });
+// Función adaptativa de DPR: 1.5 en móviles para evitar saturación de GPU, 2.0 en desktop
+const getAdaptivePixelRatio = () =>
+  Math.min(window.devicePixelRatio, (window.innerWidth <= 768 || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent)) ? 1.5 : 2.0);
+
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(getAdaptivePixelRatio());
 
 // 14. Constante reversible: usar shader multivista proyectivo en cuerpoMesh o planos flotantes
 const USE_BODY_MULTIVIEW_SHADER = true;
@@ -291,136 +301,10 @@ const atomizerGoldMaterial = new THREE.MeshBasicMaterial({
 });
 
 // ==========================================================================
-// Estrategia 2: Textura MatCap de Oro Champán Pulido con Reflejo Espejo
+// Estrategia 2: Textura MatCap de Oro Champán Pulido Tipo Espejo (Optimizado 256x256)
 // ==========================================================================
-function createChampagneMatcapTexture(maxAnisotropy = 8) {
-  const size = 512;
-  const canvas = document.createElement('canvas');
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext('2d');
-  const imgData = ctx.createImageData(size, size);
-  const data = imgData.data;
-
-  // Paleta de referencia:
-  // - Bordes exteriores: dorado tostado #795426
-  // - Zona de sombra: oro oscuro #96713A
-  // - Base dominante: oro champán #C6A66A
-  // - Transición clara: champán crema #D8C294
-  // - Reflejo principal: crema #E9E2D8
-  const colRim = [121, 84, 38];
-  const colShadow = [150, 113, 58];
-  const colBase = [198, 166, 106];
-  const colTrans = [216, 194, 148];
-  const colHl = [233, 226, 216];
-
-  function lerpRGB(a, b, t) {
-    const s = Math.max(0, Math.min(1, t));
-    return [
-      a[0] + (b[0] - a[0]) * s,
-      a[1] + (b[1] - a[1]) * s,
-      a[2] + (b[2] - a[2]) * s,
-    ];
-  }
-
-  function smoothstep(min, max, value) {
-    const x = Math.max(0, Math.min(1, (value - min) / (max - min)));
-    return x * x * (3 - 2 * x);
-  }
-
-  const cx = size / 2;
-  const cy = size / 2;
-  const radius = (size / 2) - 2;
-
-  for (let y = 0; y < size; y++) {
-    const ny = -(y - cy) / radius;
-    for (let x = 0; x < size; x++) {
-      const nx = (x - cx) / radius;
-      const r2 = nx * nx + ny * ny;
-      const idx = (y * size + x) * 4;
-
-      if (r2 > 1.0) {
-        data[idx] = colRim[0];
-        data[idx + 1] = colRim[1];
-        data[idx + 2] = colRim[2];
-        data[idx + 3] = 255;
-        continue;
-      }
-
-      const nz = Math.sqrt(Math.max(0, 1.0 - r2));
-      const rimFactor = Math.pow(1.0 - nz, 2.0);
-
-      // 1. Gradiente base: Sombra izquierda -> Base centro
-      const shadowFactor = smoothstep(-0.05, -0.65, nx);
-      let rgb = lerpRGB(colBase, colShadow, shadowFactor);
-
-      // 2. Segundo reflejo vertical tenue en el lado contrario (nx = -0.50)
-      const fillDist = Math.abs(nx - (-0.50));
-      const fillHl = Math.exp(-(fillDist * fillDist) / 0.038) * smoothstep(0.08, 0.45, nz);
-      rgb = lerpRGB(rgb, colTrans, fillHl * 0.35);
-
-      // 3. Zona de transición hacia el reflejo
-      const transZone = smoothstep(0.02, 0.26, nx) * (1.0 - smoothstep(0.46, 0.82, nx));
-      rgb = lerpRGB(rgb, colTrans, transZone * 0.55);
-
-      // 4. Reflejo principal: franja vertical amplia, suave, color crema, desplazada (nx = 0.26, ~20-25% ancho)
-      const hlDist = Math.abs(nx - 0.26);
-      const mainHl = Math.exp(-(hlDist * hlDist) / 0.020) * smoothstep(0.06, 0.45, nz);
-      rgb = lerpRGB(rgb, colHl, mainHl * 0.95);
-
-      // 5. Bordes exteriores con dorado tostado #795426
-      rgb = lerpRGB(rgb, colRim, rimFactor * 0.85);
-
-      // 6. Sutil luz cenital difusa de estudio
-      if (ny > 0.0) {
-        rgb = lerpRGB(rgb, colTrans, ny * 0.12 * nz);
-      } else {
-        rgb = lerpRGB(rgb, colShadow, (-ny) * 0.15 * nz);
-      }
-
-      data[idx] = Math.round(rgb[0]);
-      data[idx + 1] = Math.round(rgb[1]);
-      data[idx + 2] = Math.round(rgb[2]);
-      data[idx + 3] = 255;
-    }
-  }
-
-  ctx.putImageData(imgData, 0, 0);
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = maxAnisotropy;
-  texture.needsUpdate = true;
-  return texture;
-}
-
-const atomizerChampagneMatcap = createChampagneMatcapTexture(
-  renderer ? renderer.capabilities.getMaxAnisotropy() : 8
-);
-
-// Material MatCap exclusivo para el atomizador: oro champán pulido con reflejo espejo
-const atomizerMatcapMaterial = new THREE.MeshMatcapMaterial({
-  color: 0xffffff,
-  matcap: atomizerChampagneMatcap,
-  transparent: false,
-  opacity: 1.0,
-  depthTest: true,
-  depthWrite: true,
-});
-
-// Alias para compatibilidad completa en todo el código
-const atomizerMirrorGoldMaterial = atomizerMatcapMaterial;
-const champagneGoldMaterial = atomizerMatcapMaterial;
-const goldNeckMaterial = atomizerMatcapMaterial;
-const goldMaterial = atomizerMatcapMaterial;
-const collarMaterial = atomizerMatcapMaterial;
-const stemMaterial = atomizerMatcapMaterial;
-const buttonMaterial = atomizerMatcapMaterial;
-
-// Material MatCap exclusivo e independiente para las dos piezas del atomizador:
-// Anillo cilíndrico inferior y pulsador superior (oro champán pulido tipo espejo)
 function createAtomizerPieceMatcapTexture(maxAnisotropy = 8) {
-  const size = 512;
+  const size = 256; // Resolución balanceada (65k píxeles en vez de 262k)
   const canvas = document.createElement('canvas');
   canvas.width = size;
   canvas.height = size;
@@ -542,6 +426,17 @@ const atomizerPieceMaterial = new THREE.MeshMatcapMaterial({
   side: THREE.DoubleSide,
 });
 
+// Alias para compatibilidad completa en todo el código (reutiliza el mismo MatCap optimizado)
+const atomizerChampagneMatcap = atomizerPieceMatcap;
+const atomizerMatcapMaterial = atomizerPieceMaterial;
+const atomizerMirrorGoldMaterial = atomizerPieceMaterial;
+const champagneGoldMaterial = atomizerPieceMaterial;
+const goldNeckMaterial = atomizerPieceMaterial;
+const goldMaterial = atomizerPieceMaterial;
+const collarMaterial = atomizerPieceMaterial;
+const stemMaterial = atomizerPieceMaterial;
+const buttonMaterial = atomizerPieceMaterial;
+
 // 8. Franja de brillo para profundidad visual sobre el frente del cilindro
 const atomizerGoldHighlightMaterial = new THREE.MeshBasicMaterial({
   color: 0xffe3a0,
@@ -574,78 +469,80 @@ function setupFrontPhotoProjection(cuerpoMesh, bottleSize, cuerpoCenter, cuerpoB
 
   const textureLoader = new THREE.TextureLoader();
   textureLoader.load(
-    './assets/models/temptation-mystic-front-reference.png',
+    getAssetUrl('assets/models/temptation-mystic-front-reference.png'),
     (loadedTexture) => {
-      try {
-        // 9. Comprobar que la imagen tenga dimensiones válidas
-        if (
-          !loadedTexture.image ||
-          !loadedTexture.image.width ||
-          !loadedTexture.image.height
-        ) {
-          throw new Error('La imagen frontal no tiene dimensiones válidas');
+      setTimeout(() => {
+        try {
+          // 9. Comprobar que la imagen tenga dimensiones válidas
+          if (
+            !loadedTexture.image ||
+            !loadedTexture.image.width ||
+            !loadedTexture.image.height
+          ) {
+            throw new Error('La imagen frontal no tiene dimensiones válidas');
+          }
+
+          // Configuración de la textura fotográfica frontal
+          loadedTexture.colorSpace = THREE.SRGBColorSpace;
+          loadedTexture.minFilter = THREE.LinearMipmapLinearFilter;
+          loadedTexture.magFilter = THREE.LinearFilter;
+          loadedTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+          loadedTexture.generateMipmaps = true;
+          loadedTexture.needsUpdate = true;
+
+          // Canvas fuera de pantalla para recortar exclusivamente el cuerpo
+          const img = loadedTexture.image;
+          const cropCanvas = document.createElement('canvas');
+          cropCanvas.width = 1024;
+          cropCanvas.height = 1344;
+          const ctx = cropCanvas.getContext('2d');
+
+          if (!ctx) {
+            throw new Error('No se pudo obtener el contexto 2D del canvas');
+          }
+
+          // Región de recorte normalizada (excluyendo tapa, cuello y fondo)
+          const sx = img.width * 0.300;
+          const sy = img.height * 0.458;
+          const sWidth = img.width * 0.395;
+          const sHeight = img.height * 0.485;
+
+          // Máscara suave con esquinas redondeadas en el canvas
+          const cornerRadius = 42;
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(cornerRadius, 0);
+          ctx.lineTo(cropCanvas.width - cornerRadius, 0);
+          ctx.quadraticCurveTo(cropCanvas.width, 0, cropCanvas.width, cornerRadius);
+          ctx.lineTo(cropCanvas.width, cropCanvas.height - cornerRadius);
+          ctx.quadraticCurveTo(cropCanvas.width, cropCanvas.height, cropCanvas.width - cornerRadius, cropCanvas.height);
+          ctx.lineTo(cornerRadius, cropCanvas.height);
+          ctx.quadraticCurveTo(0, cropCanvas.height, 0, cropCanvas.height - cornerRadius);
+          ctx.lineTo(0, cornerRadius);
+          ctx.quadraticCurveTo(0, 0, cornerRadius, 0);
+          ctx.closePath();
+          ctx.clip();
+
+          ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, cropCanvas.width, cropCanvas.height);
+          ctx.restore();
+
+          // Textura Canvas recortada
+          bodyFrontCanvasTexture = new THREE.CanvasTexture(cropCanvas);
+          bodyFrontCanvasTexture.colorSpace = THREE.SRGBColorSpace;
+          bodyFrontCanvasTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+          bodyFrontCanvasTexture.needsUpdate = true;
+          bodyFrontTexture = bodyFrontCanvasTexture;
+          bodyMultiviewUniforms.uTexFront.value = bodyFrontTexture;
+
+          // Intentar inicializar shader multivista
+          tryInitBodyMultiviewShader();
+        } catch (err) {
+          console.error('Error al procesar la textura frontal del cuerpo:', err);
+          if (cuerpoMesh) {
+            cuerpoMesh.visible = true;
+          }
         }
-
-        // Configuración de la textura fotográfica frontal
-        loadedTexture.colorSpace = THREE.SRGBColorSpace;
-        loadedTexture.minFilter = THREE.LinearMipmapLinearFilter;
-        loadedTexture.magFilter = THREE.LinearFilter;
-        loadedTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-        loadedTexture.generateMipmaps = true;
-        loadedTexture.needsUpdate = true;
-
-        // Canvas fuera de pantalla para recortar exclusivamente el cuerpo
-        const img = loadedTexture.image;
-        const cropCanvas = document.createElement('canvas');
-        cropCanvas.width = 1024;
-        cropCanvas.height = 1344;
-        const ctx = cropCanvas.getContext('2d');
-
-        if (!ctx) {
-          throw new Error('No se pudo obtener el contexto 2D del canvas');
-        }
-
-        // Región de recorte normalizada (excluyendo tapa, cuello y fondo)
-        const sx = img.width * 0.300;
-        const sy = img.height * 0.458;
-        const sWidth = img.width * 0.395;
-        const sHeight = img.height * 0.485;
-
-        // Máscara suave con esquinas redondeadas en el canvas
-        const cornerRadius = 42;
-        ctx.save();
-        ctx.beginPath();
-        ctx.moveTo(cornerRadius, 0);
-        ctx.lineTo(cropCanvas.width - cornerRadius, 0);
-        ctx.quadraticCurveTo(cropCanvas.width, 0, cropCanvas.width, cornerRadius);
-        ctx.lineTo(cropCanvas.width, cropCanvas.height - cornerRadius);
-        ctx.quadraticCurveTo(cropCanvas.width, cropCanvas.height, cropCanvas.width - cornerRadius, cropCanvas.height);
-        ctx.lineTo(cornerRadius, cropCanvas.height);
-        ctx.quadraticCurveTo(0, cropCanvas.height, 0, cropCanvas.height - cornerRadius);
-        ctx.lineTo(0, cornerRadius);
-        ctx.quadraticCurveTo(0, 0, cornerRadius, 0);
-        ctx.closePath();
-        ctx.clip();
-
-        ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, cropCanvas.width, cropCanvas.height);
-        ctx.restore();
-
-        // Textura Canvas recortada
-        bodyFrontCanvasTexture = new THREE.CanvasTexture(cropCanvas);
-        bodyFrontCanvasTexture.colorSpace = THREE.SRGBColorSpace;
-        bodyFrontCanvasTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-        bodyFrontCanvasTexture.needsUpdate = true;
-        bodyFrontTexture = bodyFrontCanvasTexture;
-        bodyMultiviewUniforms.uTexFront.value = bodyFrontTexture;
-
-        // Intentar inicializar shader multivista
-        tryInitBodyMultiviewShader();
-      } catch (err) {
-        console.error('Error al procesar la textura frontal del cuerpo:', err);
-        if (cuerpoMesh) {
-          cuerpoMesh.visible = true;
-        }
-      }
+      }, 0);
     },
     undefined,
     (error) => {
@@ -668,58 +565,60 @@ function setupCapFrontPhotoProjection(targetCapGroup, capMesh) {
 
   const textureLoader = new THREE.TextureLoader();
   textureLoader.load(
-    './assets/models/temptation-mystic-front-reference.png',
+    getAssetUrl('assets/models/temptation-mystic-front-reference.png'),
     (loadedTexture) => {
-      try {
-        if (!loadedTexture.image || !loadedTexture.image.width || !loadedTexture.image.height) {
-          throw new Error('La imagen de referencia frontal no tiene dimensiones válidas para la tapa');
+      setTimeout(() => {
+        try {
+          if (!loadedTexture.image || !loadedTexture.image.width || !loadedTexture.image.height) {
+            throw new Error('La imagen de referencia frontal no tiene dimensiones válidas para la tapa');
+          }
+
+          const img = loadedTexture.image;
+          const cropCanvas = document.createElement('canvas');
+          cropCanvas.width = 1024;
+          cropCanvas.height = 308;
+          const ctx = cropCanvas.getContext('2d');
+          if (!ctx) return;
+
+          // Recorte normalizado original de la tapa: x=0.325, y=0.300, w=0.350, h=0.105
+          const sx = img.width * 0.325;
+          const sy = img.height * 0.300;
+          const sWidth = img.width * 0.350;
+          const sHeight = img.height * 0.105;
+
+          // Máscara suave con esquinas redondeadas
+          const cornerRadius = 14;
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(cornerRadius, 0);
+          ctx.lineTo(cropCanvas.width - cornerRadius, 0);
+          ctx.quadraticCurveTo(cropCanvas.width, 0, cropCanvas.width, cornerRadius);
+          ctx.lineTo(cropCanvas.width, cropCanvas.height - cornerRadius);
+          ctx.quadraticCurveTo(cropCanvas.width, cropCanvas.height, cropCanvas.width - cornerRadius, cropCanvas.height);
+          ctx.lineTo(cornerRadius, cropCanvas.height);
+          ctx.quadraticCurveTo(0, cropCanvas.height, 0, cropCanvas.height - cornerRadius);
+          ctx.lineTo(0, cornerRadius);
+          ctx.quadraticCurveTo(0, 0, cornerRadius, 0);
+          ctx.closePath();
+          ctx.clip();
+
+          ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, cropCanvas.width, cropCanvas.height);
+          ctx.restore();
+
+          // Textura original de la tapa (frontal cerrada)
+          capOriginalFrontTexture = new THREE.CanvasTexture(cropCanvas);
+          capOriginalFrontTexture.colorSpace = THREE.SRGBColorSpace;
+          capOriginalFrontTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+          capOriginalFrontTexture.flipY = true;
+          capOriginalFrontTexture.needsUpdate = true;
+          capFrontCanvasTexture = capOriginalFrontTexture;
+          capMultiviewUniforms.uCapOrigFront.value = capOriginalFrontTexture;
+
+          tryInitCapMultiviewShader();
+        } catch (err) {
+          console.error('Error al procesar la textura frontal original de la tapa:', err);
         }
-
-        const img = loadedTexture.image;
-        const cropCanvas = document.createElement('canvas');
-        cropCanvas.width = 1024;
-        cropCanvas.height = 308;
-        const ctx = cropCanvas.getContext('2d');
-        if (!ctx) return;
-
-        // Recorte normalizado original de la tapa: x=0.325, y=0.300, w=0.350, h=0.105
-        const sx = img.width * 0.325;
-        const sy = img.height * 0.300;
-        const sWidth = img.width * 0.350;
-        const sHeight = img.height * 0.105;
-
-        // Máscara suave con esquinas redondeadas
-        const cornerRadius = 14;
-        ctx.save();
-        ctx.beginPath();
-        ctx.moveTo(cornerRadius, 0);
-        ctx.lineTo(cropCanvas.width - cornerRadius, 0);
-        ctx.quadraticCurveTo(cropCanvas.width, 0, cropCanvas.width, cornerRadius);
-        ctx.lineTo(cropCanvas.width, cropCanvas.height - cornerRadius);
-        ctx.quadraticCurveTo(cropCanvas.width, cropCanvas.height, cropCanvas.width - cornerRadius, cropCanvas.height);
-        ctx.lineTo(cornerRadius, cropCanvas.height);
-        ctx.quadraticCurveTo(0, cropCanvas.height, 0, cropCanvas.height - cornerRadius);
-        ctx.lineTo(0, cornerRadius);
-        ctx.quadraticCurveTo(0, 0, cornerRadius, 0);
-        ctx.closePath();
-        ctx.clip();
-
-        ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, cropCanvas.width, cropCanvas.height);
-        ctx.restore();
-
-        // Textura original de la tapa (frontal cerrada)
-        capOriginalFrontTexture = new THREE.CanvasTexture(cropCanvas);
-        capOriginalFrontTexture.colorSpace = THREE.SRGBColorSpace;
-        capOriginalFrontTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-        capOriginalFrontTexture.flipY = true;
-        capOriginalFrontTexture.needsUpdate = true;
-        capFrontCanvasTexture = capOriginalFrontTexture;
-        capMultiviewUniforms.uCapOrigFront.value = capOriginalFrontTexture;
-
-        tryInitCapMultiviewShader();
-      } catch (err) {
-        console.error('Error al procesar la textura frontal original de la tapa:', err);
-      }
+      }, 0);
     },
     undefined,
     (err) => {
@@ -734,83 +633,63 @@ function setupCapFrontPhotoProjection(targetCapGroup, capMesh) {
 function setupCapCleanTextures() {
   const textureLoader = new THREE.TextureLoader();
   textureLoader.load(
-    './assets/models/temptation-mystic-cap-clean-reference.png',
+    getAssetUrl('assets/models/temptation-mystic-cap-clean-reference.png'),
     (loadedTexture) => {
-      try {
-        if (!loadedTexture.image || !loadedTexture.image.width || !loadedTexture.image.height) return;
+      setTimeout(() => {
+        try {
+          if (!loadedTexture.image || !loadedTexture.image.width || !loadedTexture.image.height) return;
 
-        const img = loadedTexture.image;
+          const img = loadedTexture.image;
 
-        // Detectar o recortar únicamente los límites reales no transparentes de la tapa
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = img.width;
-        tempCanvas.height = img.height;
-        const tempCtx = tempCanvas.getContext('2d');
-        if (!tempCtx) return;
-        tempCtx.drawImage(img, 0, 0);
-        const data = tempCtx.getImageData(0, 0, img.width, img.height).data;
+          // Marco precalculado de la tapa limpia (evita escaneo síncrono de 1.05M píxeles con getImageData)
+          const minX = 352;
+          const maxX = 672;
+          const minY = 463;
+          const maxY = 561;
 
-        let minX = img.width, maxX = 0, minY = img.height, maxY = 0;
-        for (let y = 0; y < img.height; y++) {
-          for (let x = 0; x < img.width; x++) {
-            if (data[(y * img.width + x) * 4 + 3] > 10) {
-              if (x < minX) minX = x;
-              if (x > maxX) maxX = x;
-              if (y < minY) minY = y;
-              if (y > maxY) maxY = y;
-            }
+          const cropW = maxX - minX + 1;
+          const cropH = maxY - minY + 1;
+
+          // Frontal limpia
+          const cleanFrontCanvas = document.createElement('canvas');
+          cleanFrontCanvas.width = 1024;
+          cleanFrontCanvas.height = Math.round(1024 * (cropH / cropW));
+          const ctxF = cleanFrontCanvas.getContext('2d');
+          if (ctxF) {
+            ctxF.drawImage(img, minX, minY, cropW, cropH, 0, 0, cleanFrontCanvas.width, cleanFrontCanvas.height);
+            capCleanFrontTexture = new THREE.CanvasTexture(cleanFrontCanvas);
+            capCleanFrontTexture.colorSpace = THREE.SRGBColorSpace;
+            capCleanFrontTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+            capCleanFrontTexture.flipY = true;
+            capCleanFrontTexture.needsUpdate = true;
+            capMultiviewUniforms.uCapCleanFront.value = capCleanFrontTexture;
           }
+
+          // Posterior limpia horizontalmente reflejada mediante canvas
+          const cleanBackCanvas = document.createElement('canvas');
+          cleanBackCanvas.width = cleanFrontCanvas.width;
+          cleanBackCanvas.height = cleanFrontCanvas.height;
+          const ctxB = cleanBackCanvas.getContext('2d');
+          if (ctxB) {
+            ctxB.save();
+            ctxB.translate(cleanBackCanvas.width, 0);
+            ctxB.scale(-1, 1);
+            ctxB.drawImage(cleanFrontCanvas, 0, 0);
+            ctxB.restore();
+
+            capCleanBackTexture = new THREE.CanvasTexture(cleanBackCanvas);
+            capCleanBackTexture.colorSpace = THREE.SRGBColorSpace;
+            capCleanBackTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+            capCleanBackTexture.flipY = true;
+            capCleanBackTexture.needsUpdate = true;
+            capMultiviewUniforms.uCapCleanBack.value = capCleanBackTexture;
+          }
+
+          tryInitCapMultiviewShader();
+        } catch (err) {
+          console.error('Error procesando referencia limpia de la tapa:', err);
         }
-
-        if (minX > maxX || minY > maxY) {
-          minX = 352;
-          maxX = 672;
-          minY = 463;
-          maxY = 561;
-        }
-
-        const cropW = maxX - minX + 1;
-        const cropH = maxY - minY + 1;
-
-        // Frontal limpia
-        const cleanFrontCanvas = document.createElement('canvas');
-        cleanFrontCanvas.width = 1024;
-        cleanFrontCanvas.height = Math.round(1024 * (cropH / cropW));
-        const ctxF = cleanFrontCanvas.getContext('2d');
-        if (ctxF) {
-          ctxF.drawImage(img, minX, minY, cropW, cropH, 0, 0, cleanFrontCanvas.width, cleanFrontCanvas.height);
-          capCleanFrontTexture = new THREE.CanvasTexture(cleanFrontCanvas);
-          capCleanFrontTexture.colorSpace = THREE.SRGBColorSpace;
-          capCleanFrontTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-          capCleanFrontTexture.flipY = true;
-          capCleanFrontTexture.needsUpdate = true;
-          capMultiviewUniforms.uCapCleanFront.value = capCleanFrontTexture;
-        }
-
-        // Posterior limpia horizontalmente reflejada mediante canvas
-        const cleanBackCanvas = document.createElement('canvas');
-        cleanBackCanvas.width = cleanFrontCanvas.width;
-        cleanBackCanvas.height = cleanFrontCanvas.height;
-        const ctxB = cleanBackCanvas.getContext('2d');
-        if (ctxB) {
-          ctxB.save();
-          ctxB.translate(cleanBackCanvas.width, 0);
-          ctxB.scale(-1, 1);
-          ctxB.drawImage(cleanFrontCanvas, 0, 0);
-          ctxB.restore();
-
-          capCleanBackTexture = new THREE.CanvasTexture(cleanBackCanvas);
-          capCleanBackTexture.colorSpace = THREE.SRGBColorSpace;
-          capCleanBackTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-          capCleanBackTexture.flipY = true;
-          capCleanBackTexture.needsUpdate = true;
-          capMultiviewUniforms.uCapCleanBack.value = capCleanBackTexture;
-        }
-
-        tryInitCapMultiviewShader();
-      } catch (err) {
-        console.error('Error procesando referencia limpia de la tapa:', err);
-      }
+      }, 0);
     },
     undefined,
     (err) => {
@@ -825,113 +704,115 @@ function setupCapCleanTextures() {
 function setupBackPhotoProjections(cuerpoMesh, bottleSize, cuerpoCenter, cuerpoBox, targetCapGroup, capMesh) {
   const textureLoader = new THREE.TextureLoader();
   textureLoader.load(
-    './assets/models/temptation-mystic-back-reference.png',
+    getAssetUrl('assets/models/temptation-mystic-back-reference.png'),
     (loadedTexture) => {
-      try {
-        if (
-          !loadedTexture.image ||
-          !loadedTexture.image.width ||
-          !loadedTexture.image.height
-        ) {
-          throw new Error('La imagen de referencia posterior no tiene dimensiones válidas');
-        }
-
-        const img = loadedTexture.image;
-
-        // -------------------------------------------------------------
-        // 4 & 5. Proyección posterior del cuerpo
-        // -------------------------------------------------------------
-        if (cuerpoMesh && bottleSize && cuerpoCenter && cuerpoBox) {
-          const backBodyCropCanvas = document.createElement('canvas');
-          backBodyCropCanvas.width = 1024;
-          backBodyCropCanvas.height = 1320;
-          const ctxBody = backBodyCropCanvas.getContext('2d');
-
-          if (ctxBody) {
-            // 4. Recorte normalizado: x=0.300, y=0.465, width=0.380, height=0.490
-            const sx = img.width * 0.300;
-            const sy = img.height * 0.465;
-            const sWidth = img.width * 0.380;
-            const sHeight = img.height * 0.490;
-
-            const cornerRadius = 36;
-            ctxBody.save();
-            ctxBody.beginPath();
-            ctxBody.moveTo(cornerRadius, 0);
-            ctxBody.lineTo(backBodyCropCanvas.width - cornerRadius, 0);
-            ctxBody.quadraticCurveTo(backBodyCropCanvas.width, 0, backBodyCropCanvas.width, cornerRadius);
-            ctxBody.lineTo(backBodyCropCanvas.width, backBodyCropCanvas.height - cornerRadius);
-            ctxBody.quadraticCurveTo(backBodyCropCanvas.width, backBodyCropCanvas.height, backBodyCropCanvas.width - cornerRadius, backBodyCropCanvas.height);
-            ctxBody.lineTo(cornerRadius, backBodyCropCanvas.height);
-            ctxBody.quadraticCurveTo(0, backBodyCropCanvas.height, 0, backBodyCropCanvas.height - cornerRadius);
-            ctxBody.lineTo(0, cornerRadius);
-            ctxBody.quadraticCurveTo(0, 0, cornerRadius, 0);
-            ctxBody.closePath();
-            ctxBody.clip();
-
-            ctxBody.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, backBodyCropCanvas.width, backBodyCropCanvas.height);
-            ctxBody.restore();
-
-            bodyBackCanvasTexture = new THREE.CanvasTexture(backBodyCropCanvas);
-            bodyBackCanvasTexture.colorSpace = THREE.SRGBColorSpace;
-            bodyBackCanvasTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-            bodyBackCanvasTexture.needsUpdate = true;
-            bodyBackTexture = bodyBackCanvasTexture;
-            bodyMultiviewUniforms.uTexBack.value = bodyBackTexture;
+      setTimeout(() => {
+        try {
+          if (
+            !loadedTexture.image ||
+            !loadedTexture.image.width ||
+            !loadedTexture.image.height
+          ) {
+            throw new Error('La imagen de referencia posterior no tiene dimensiones válidas');
           }
-        }
 
-        // -------------------------------------------------------------
-        // 6 & 7. Proyección posterior original de la tapa
-        // -------------------------------------------------------------
-        if (targetCapGroup && capMesh) {
-          const backCapCropCanvas = document.createElement('canvas');
-          backCapCropCanvas.width = 1024;
-          backCapCropCanvas.height = 336;
-          const ctxCap = backCapCropCanvas.getContext('2d');
+          const img = loadedTexture.image;
 
-          if (ctxCap) {
-            // Valores normalizados originales: x = 0.325, y = 0.295, width = 0.350, height = 0.115
-            const sx = img.width * 0.325;
-            const sy = img.height * 0.295;
-            const sWidth = img.width * 0.350;
-            const sHeight = img.height * 0.115;
+          // -------------------------------------------------------------
+          // 4 & 5. Proyección posterior del cuerpo
+          // -------------------------------------------------------------
+          if (cuerpoMesh && bottleSize && cuerpoCenter && cuerpoBox) {
+            const backBodyCropCanvas = document.createElement('canvas');
+            backBodyCropCanvas.width = 1024;
+            backBodyCropCanvas.height = 1320;
+            const ctxBody = backBodyCropCanvas.getContext('2d');
 
-            const cornerRadius = 14;
-            ctxCap.save();
-            ctxCap.beginPath();
-            ctxCap.moveTo(cornerRadius, 0);
-            ctxCap.lineTo(backCapCropCanvas.width - cornerRadius, 0);
-            ctxCap.quadraticCurveTo(backCapCropCanvas.width, 0, backCapCropCanvas.width, cornerRadius);
-            ctxCap.lineTo(backCapCropCanvas.width, backCapCropCanvas.height - cornerRadius);
-            ctxCap.quadraticCurveTo(backCapCropCanvas.width, backCapCropCanvas.height, backCapCropCanvas.width - cornerRadius, backCapCropCanvas.height);
-            ctxCap.lineTo(cornerRadius, backCapCropCanvas.height);
-            ctxCap.quadraticCurveTo(0, backCapCropCanvas.height, 0, backCapCropCanvas.height - cornerRadius);
-            ctxCap.lineTo(0, cornerRadius);
-            ctxCap.quadraticCurveTo(0, 0, cornerRadius, 0);
-            ctxCap.closePath();
-            ctxCap.clip();
+            if (ctxBody) {
+              // 4. Recorte normalizado: x=0.300, y=0.465, width=0.380, height=0.490
+              const sx = img.width * 0.300;
+              const sy = img.height * 0.465;
+              const sWidth = img.width * 0.380;
+              const sHeight = img.height * 0.490;
 
-            ctxCap.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, backCapCropCanvas.width, backCapCropCanvas.height);
-            ctxCap.restore();
+              const cornerRadius = 36;
+              ctxBody.save();
+              ctxBody.beginPath();
+              ctxBody.moveTo(cornerRadius, 0);
+              ctxBody.lineTo(backBodyCropCanvas.width - cornerRadius, 0);
+              ctxBody.quadraticCurveTo(backBodyCropCanvas.width, 0, backBodyCropCanvas.width, cornerRadius);
+              ctxBody.lineTo(backBodyCropCanvas.width, backBodyCropCanvas.height - cornerRadius);
+              ctxBody.quadraticCurveTo(backBodyCropCanvas.width, backBodyCropCanvas.height, backBodyCropCanvas.width - cornerRadius, backBodyCropCanvas.height);
+              ctxBody.lineTo(cornerRadius, backBodyCropCanvas.height);
+              ctxBody.quadraticCurveTo(0, backBodyCropCanvas.height, 0, backBodyCropCanvas.height - cornerRadius);
+              ctxBody.lineTo(0, cornerRadius);
+              ctxBody.quadraticCurveTo(0, 0, cornerRadius, 0);
+              ctxBody.closePath();
+              ctxBody.clip();
 
-            capOriginalBackTexture = new THREE.CanvasTexture(backCapCropCanvas);
-            capOriginalBackTexture.colorSpace = THREE.SRGBColorSpace;
-            capOriginalBackTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-            capOriginalBackTexture.flipY = true;
-            capOriginalBackTexture.needsUpdate = true;
-            capBackCanvasTexture = capOriginalBackTexture;
-            capMultiviewUniforms.uCapOrigBack.value = capOriginalBackTexture;
+              ctxBody.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, backBodyCropCanvas.width, backBodyCropCanvas.height);
+              ctxBody.restore();
 
-            tryInitCapMultiviewShader();
+              bodyBackCanvasTexture = new THREE.CanvasTexture(backBodyCropCanvas);
+              bodyBackCanvasTexture.colorSpace = THREE.SRGBColorSpace;
+              bodyBackCanvasTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+              bodyBackCanvasTexture.needsUpdate = true;
+              bodyBackTexture = bodyBackCanvasTexture;
+              bodyMultiviewUniforms.uTexBack.value = bodyBackTexture;
+            }
           }
-        }
 
-        // Intentar inicializar shader multivista
-        tryInitBodyMultiviewShader();
-      } catch (err) {
-        console.error('Error al crear proyecciones posteriores:', err);
-      }
+          // -------------------------------------------------------------
+          // 6 & 7. Proyección posterior original de la tapa
+          // -------------------------------------------------------------
+          if (targetCapGroup && capMesh) {
+            const backCapCropCanvas = document.createElement('canvas');
+            backCapCropCanvas.width = 1024;
+            backCapCropCanvas.height = 336;
+            const ctxCap = backCapCropCanvas.getContext('2d');
+
+            if (ctxCap) {
+              // Valores normalizados originales: x = 0.325, y = 0.295, width = 0.350, height = 0.115
+              const sx = img.width * 0.325;
+              const sy = img.height * 0.295;
+              const sWidth = img.width * 0.350;
+              const sHeight = img.height * 0.115;
+
+              const cornerRadius = 14;
+              ctxCap.save();
+              ctxCap.beginPath();
+              ctxCap.moveTo(cornerRadius, 0);
+              ctxCap.lineTo(backCapCropCanvas.width - cornerRadius, 0);
+              ctxCap.quadraticCurveTo(backCapCropCanvas.width, 0, backCapCropCanvas.width, cornerRadius);
+              ctxCap.lineTo(backCapCropCanvas.width, backCapCropCanvas.height - cornerRadius);
+              ctxCap.quadraticCurveTo(backCapCropCanvas.width, backCapCropCanvas.height, backCapCropCanvas.width - cornerRadius, backCapCropCanvas.height);
+              ctxCap.lineTo(cornerRadius, backCapCropCanvas.height);
+              ctxCap.quadraticCurveTo(0, backCapCropCanvas.height, 0, backCapCropCanvas.height - cornerRadius);
+              ctxCap.lineTo(0, cornerRadius);
+              ctxCap.quadraticCurveTo(0, 0, cornerRadius, 0);
+              ctxCap.closePath();
+              ctxCap.clip();
+
+              ctxCap.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, backCapCropCanvas.width, backCapCropCanvas.height);
+              ctxCap.restore();
+
+              capOriginalBackTexture = new THREE.CanvasTexture(backCapCropCanvas);
+              capOriginalBackTexture.colorSpace = THREE.SRGBColorSpace;
+              capOriginalBackTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+              capOriginalBackTexture.flipY = true;
+              capOriginalBackTexture.needsUpdate = true;
+              capBackCanvasTexture = capOriginalBackTexture;
+              capMultiviewUniforms.uCapOrigBack.value = capOriginalBackTexture;
+
+              tryInitCapMultiviewShader();
+            }
+          }
+
+          // Intentar inicializar shader multivista
+          tryInitBodyMultiviewShader();
+        } catch (err) {
+          console.error('Error al crear proyecciones posteriores:', err);
+        }
+      }, 0);
     },
     undefined,
     (error) => {
@@ -954,74 +835,76 @@ function setupSidePhotoProjections(
 ) {
   const textureLoader = new THREE.TextureLoader();
   textureLoader.load(
-    './assets/models/temptation-mystic-side-reference.png',
+    getAssetUrl('assets/models/temptation-mystic-side-reference.png'),
     (loadedTexture) => {
-      try {
-        if (
-          !loadedTexture.image ||
-          !loadedTexture.image.width ||
-          !loadedTexture.image.height
-        ) {
-          throw new Error('La imagen de referencia lateral no tiene dimensiones válidas');
+      setTimeout(() => {
+        try {
+          if (
+            !loadedTexture.image ||
+            !loadedTexture.image.width ||
+            !loadedTexture.image.height
+          ) {
+            throw new Error('La imagen de referencia lateral no tiene dimensiones válidas');
+          }
+
+          const img = loadedTexture.image;
+
+          function createSideTexture(canvas) {
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.colorSpace = THREE.SRGBColorSpace;
+            tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+            tex.needsUpdate = true;
+            return tex;
+          }
+
+          // -------------------------------------------------------------
+          // 1. Cuerpo lateral (Cuerpo: x=0.414, y=0.463, width=0.170, height=0.490)
+          // -------------------------------------------------------------
+          if (cuerpoMesh && bottleSize && cuerpoCenter && cuerpoBox) {
+            const sx = img.width * 0.414;
+            const sy = img.height * 0.463;
+            const sWidth = img.width * 0.170;
+            const sHeight = img.height * 0.490;
+
+            const canvasW = 512;
+            const canvasH = Math.round(canvasW * (sHeight / sWidth));
+
+            // Canvas original (derecho)
+            const bodyRightCanvas = document.createElement('canvas');
+            bodyRightCanvas.width = canvasW;
+            bodyRightCanvas.height = canvasH;
+            const ctxR = bodyRightCanvas.getContext('2d');
+            ctxR.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, canvasW, canvasH);
+
+            // Canvas reflejado horizontalmente (izquierdo)
+            const bodyLeftCanvas = document.createElement('canvas');
+            bodyLeftCanvas.width = canvasW;
+            bodyLeftCanvas.height = canvasH;
+            const ctxL = bodyLeftCanvas.getContext('2d');
+            ctxL.save();
+            ctxL.scale(-1, 1);
+            ctxL.drawImage(img, sx, sy, sWidth, sHeight, -canvasW, 0, canvasW, canvasH);
+            ctxL.restore();
+
+            bodyRightCanvasTexture = createSideTexture(bodyRightCanvas);
+            bodyLeftCanvasTexture = createSideTexture(bodyLeftCanvas);
+            bodyMultiviewUniforms.uTexRight.value = bodyRightCanvasTexture;
+            bodyMultiviewUniforms.uTexLeft.value = bodyLeftCanvasTexture;
+          }
+
+          // -------------------------------------------------------------
+          // 2. Tapa lateral (Gestionada con referencias closed y clean independientes)
+          // -------------------------------------------------------------
+          if (targetCapGroup && capMesh) {
+            setupCapSideTextures(targetCapGroup, capMesh);
+          }
+
+          // Intentar inicializar shader multivista del cuerpo cuando sus texturas laterales estén listas
+          tryInitBodyMultiviewShader();
+        } catch (err) {
+          console.error('Error al configurar proyecciones laterales:', err);
         }
-
-        const img = loadedTexture.image;
-
-        function createSideTexture(canvas) {
-          const tex = new THREE.CanvasTexture(canvas);
-          tex.colorSpace = THREE.SRGBColorSpace;
-          tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-          tex.needsUpdate = true;
-          return tex;
-        }
-
-        // -------------------------------------------------------------
-        // 1. Cuerpo lateral (Cuerpo: x=0.414, y=0.463, width=0.170, height=0.490)
-        // -------------------------------------------------------------
-        if (cuerpoMesh && bottleSize && cuerpoCenter && cuerpoBox) {
-          const sx = img.width * 0.414;
-          const sy = img.height * 0.463;
-          const sWidth = img.width * 0.170;
-          const sHeight = img.height * 0.490;
-
-          const canvasW = 512;
-          const canvasH = Math.round(canvasW * (sHeight / sWidth));
-
-          // Canvas original (derecho)
-          const bodyRightCanvas = document.createElement('canvas');
-          bodyRightCanvas.width = canvasW;
-          bodyRightCanvas.height = canvasH;
-          const ctxR = bodyRightCanvas.getContext('2d');
-          ctxR.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, canvasW, canvasH);
-
-          // Canvas reflejado horizontalmente (izquierdo)
-          const bodyLeftCanvas = document.createElement('canvas');
-          bodyLeftCanvas.width = canvasW;
-          bodyLeftCanvas.height = canvasH;
-          const ctxL = bodyLeftCanvas.getContext('2d');
-          ctxL.save();
-          ctxL.scale(-1, 1);
-          ctxL.drawImage(img, sx, sy, sWidth, sHeight, -canvasW, 0, canvasW, canvasH);
-          ctxL.restore();
-
-          bodyRightCanvasTexture = createSideTexture(bodyRightCanvas);
-          bodyLeftCanvasTexture = createSideTexture(bodyLeftCanvas);
-          bodyMultiviewUniforms.uTexRight.value = bodyRightCanvasTexture;
-          bodyMultiviewUniforms.uTexLeft.value = bodyLeftCanvasTexture;
-        }
-
-        // -------------------------------------------------------------
-        // 2. Tapa lateral (Gestionada con referencias closed y clean independientes)
-        // -------------------------------------------------------------
-        if (targetCapGroup && capMesh) {
-          setupCapSideTextures(targetCapGroup, capMesh);
-        }
-
-        // Intentar inicializar shader multivista del cuerpo cuando sus texturas laterales estén listas
-        tryInitBodyMultiviewShader();
-      } catch (err) {
-        console.error('Error al configurar proyecciones laterales:', err);
-      }
+      }, 0);
     },
     undefined,
     (error) => {
@@ -1042,127 +925,99 @@ function setupCapSideTextures(targetCapGroup, capMesh) {
   function processCapSideTextures() {
     if (!closedImg || !cleanImg) return;
 
-    try {
-      // 1. Detectar los límites reales no transparentes de cada imagen
-      function detectBounds(img) {
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = img.width;
-        tempCanvas.height = img.height;
-        const tempCtx = tempCanvas.getContext('2d');
-        if (!tempCtx) return { minX: 510, maxX: 744, minY: 556, maxY: 697 };
-        tempCtx.drawImage(img, 0, 0);
-        const data = tempCtx.getImageData(0, 0, img.width, img.height).data;
-        let minX = img.width, maxX = 0, minY = img.height, maxY = 0;
-        for (let y = 0; y < img.height; y++) {
-          for (let x = 0; x < img.width; x++) {
-            if (data[(y * img.width + x) * 4 + 3] > 10) {
-              if (x < minX) minX = x;
-              if (x > maxX) maxX = x;
-              if (y < minY) minY = y;
-              if (y > maxY) maxY = y;
-            }
-          }
-        }
-        if (minX > maxX || minY > maxY) {
-          minX = 510; maxX = 744; minY = 556; maxY = 697;
-        }
-        return { minX, maxX, minY, maxY };
+    setTimeout(() => {
+      try {
+        // Marco envolvente unificado precalculado (evita escaneo síncrono de 3.14M píxeles con getImageData)
+        const minX = 510;
+        const maxX = 744;
+        const minY = 556;
+        const maxY = 697;
+
+        const cropW = maxX - minX + 1;
+        const cropH = maxY - minY + 1;
+
+        const canvasW = 512;
+        const canvasH = Math.round(canvasW * (cropH / cropW));
+
+        // 1. Lateral derecho cerrada (temptation-mystic-cap-side-closed.png)
+        const canvasClosed = document.createElement('canvas');
+        canvasClosed.width = canvasW;
+        canvasClosed.height = canvasH;
+        const ctxClosed = canvasClosed.getContext('2d');
+        ctxClosed.drawImage(closedImg, minX, minY, cropW, cropH, 0, 0, canvasW, canvasH);
+
+        capSideClosedTexture = new THREE.CanvasTexture(canvasClosed);
+        capSideClosedTexture.colorSpace = THREE.SRGBColorSpace;
+        capSideClosedTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        capSideClosedTexture.flipY = true;
+        capSideClosedTexture.needsUpdate = true;
+        capMultiviewUniforms.uCapSideClosedRight.value = capSideClosedTexture;
+
+        // 2. Lateral derecho limpia (temptation-mystic-cap-side-clean.png)
+        const canvasClean = document.createElement('canvas');
+        canvasClean.width = canvasW;
+        canvasClean.height = canvasH;
+        const ctxClean = canvasClean.getContext('2d');
+        ctxClean.drawImage(cleanImg, minX, minY, cropW, cropH, 0, 0, canvasW, canvasH);
+
+        capSideCleanTexture = new THREE.CanvasTexture(canvasClean);
+        capSideCleanTexture.colorSpace = THREE.SRGBColorSpace;
+        capSideCleanTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        capSideCleanTexture.flipY = true;
+        capSideCleanTexture.needsUpdate = true;
+        capMultiviewUniforms.uCapSideCleanRight.value = capSideCleanTexture;
+
+        // 3. Lateral izquierdo cerrada (reflejada horizontalmente mediante canvas)
+        const canvasClosedM = document.createElement('canvas');
+        canvasClosedM.width = canvasW;
+        canvasClosedM.height = canvasH;
+        const ctxClosedM = canvasClosedM.getContext('2d');
+        ctxClosedM.save();
+        ctxClosedM.translate(canvasW, 0);
+        ctxClosedM.scale(-1, 1);
+        ctxClosedM.drawImage(canvasClosed, 0, 0);
+        ctxClosedM.restore();
+
+        capSideClosedMirroredTexture = new THREE.CanvasTexture(canvasClosedM);
+        capSideClosedMirroredTexture.colorSpace = THREE.SRGBColorSpace;
+        capSideClosedMirroredTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        capSideClosedMirroredTexture.flipY = true;
+        capSideClosedMirroredTexture.needsUpdate = true;
+        capMultiviewUniforms.uCapSideClosedLeft.value = capSideClosedMirroredTexture;
+
+        // 4. Lateral izquierdo limpia (reflejada horizontalmente mediante canvas)
+        const canvasCleanM = document.createElement('canvas');
+        canvasCleanM.width = canvasW;
+        canvasCleanM.height = canvasH;
+        const ctxCleanM = canvasCleanM.getContext('2d');
+        ctxCleanM.save();
+        ctxCleanM.translate(canvasW, 0);
+        ctxCleanM.scale(-1, 1);
+        ctxCleanM.drawImage(canvasClean, 0, 0);
+        ctxCleanM.restore();
+
+        capSideCleanMirroredTexture = new THREE.CanvasTexture(canvasCleanM);
+        capSideCleanMirroredTexture.colorSpace = THREE.SRGBColorSpace;
+        capSideCleanMirroredTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        capSideCleanMirroredTexture.flipY = true;
+        capSideCleanMirroredTexture.needsUpdate = true;
+        capMultiviewUniforms.uCapSideCleanLeft.value = capSideCleanMirroredTexture;
+
+        // Actualizar referencias uTexRight / uTexLeft para retrocompatibilidad
+        capRightCanvasTexture = capSideClosedTexture;
+        capLeftCanvasTexture = capSideClosedMirroredTexture;
+        capMultiviewUniforms.uTexRight.value = capSideClosedTexture;
+        capMultiviewUniforms.uTexLeft.value = capSideClosedMirroredTexture;
+
+        tryInitCapMultiviewShader();
+      } catch (err) {
+        console.error('Error al procesar texturas laterales de la tapa:', err);
       }
-
-      const boundsClosed = detectBounds(closedImg);
-      const boundsClean = detectBounds(cleanImg);
-
-      // Marco envolvente unificado para garantizar coincidencia perfecta:
-      // mismo tamaño, mismo centro, misma altura, mismo ancho, misma silueta y misma posición vertical
-      const minX = Math.min(boundsClosed.minX, boundsClean.minX);
-      const maxX = Math.max(boundsClosed.maxX, boundsClean.maxX);
-      const minY = Math.min(boundsClosed.minY, boundsClean.minY);
-      const maxY = Math.max(boundsClosed.maxY, boundsClean.maxY);
-
-      const cropW = maxX - minX + 1;
-      const cropH = maxY - minY + 1;
-
-      const canvasW = 512;
-      const canvasH = Math.round(canvasW * (cropH / cropW));
-
-      // 1. Lateral derecho cerrada (temptation-mystic-cap-side-closed.png)
-      const canvasClosed = document.createElement('canvas');
-      canvasClosed.width = canvasW;
-      canvasClosed.height = canvasH;
-      const ctxClosed = canvasClosed.getContext('2d');
-      ctxClosed.drawImage(closedImg, minX, minY, cropW, cropH, 0, 0, canvasW, canvasH);
-
-      capSideClosedTexture = new THREE.CanvasTexture(canvasClosed);
-      capSideClosedTexture.colorSpace = THREE.SRGBColorSpace;
-      capSideClosedTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      capSideClosedTexture.flipY = true;
-      capSideClosedTexture.needsUpdate = true;
-      capMultiviewUniforms.uCapSideClosedRight.value = capSideClosedTexture;
-
-      // 2. Lateral derecho limpia (temptation-mystic-cap-side-clean.png)
-      const canvasClean = document.createElement('canvas');
-      canvasClean.width = canvasW;
-      canvasClean.height = canvasH;
-      const ctxClean = canvasClean.getContext('2d');
-      ctxClean.drawImage(cleanImg, minX, minY, cropW, cropH, 0, 0, canvasW, canvasH);
-
-      capSideCleanTexture = new THREE.CanvasTexture(canvasClean);
-      capSideCleanTexture.colorSpace = THREE.SRGBColorSpace;
-      capSideCleanTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      capSideCleanTexture.flipY = true;
-      capSideCleanTexture.needsUpdate = true;
-      capMultiviewUniforms.uCapSideCleanRight.value = capSideCleanTexture;
-
-      // 3. Lateral izquierdo cerrada (reflejada horizontalmente mediante canvas)
-      const canvasClosedM = document.createElement('canvas');
-      canvasClosedM.width = canvasW;
-      canvasClosedM.height = canvasH;
-      const ctxClosedM = canvasClosedM.getContext('2d');
-      ctxClosedM.save();
-      ctxClosedM.translate(canvasW, 0);
-      ctxClosedM.scale(-1, 1);
-      ctxClosedM.drawImage(canvasClosed, 0, 0);
-      ctxClosedM.restore();
-
-      capSideClosedMirroredTexture = new THREE.CanvasTexture(canvasClosedM);
-      capSideClosedMirroredTexture.colorSpace = THREE.SRGBColorSpace;
-      capSideClosedMirroredTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      capSideClosedMirroredTexture.flipY = true;
-      capSideClosedMirroredTexture.needsUpdate = true;
-      capMultiviewUniforms.uCapSideClosedLeft.value = capSideClosedMirroredTexture;
-
-      // 4. Lateral izquierdo limpia (reflejada horizontalmente mediante canvas)
-      const canvasCleanM = document.createElement('canvas');
-      canvasCleanM.width = canvasW;
-      canvasCleanM.height = canvasH;
-      const ctxCleanM = canvasCleanM.getContext('2d');
-      ctxCleanM.save();
-      ctxCleanM.translate(canvasW, 0);
-      ctxCleanM.scale(-1, 1);
-      ctxCleanM.drawImage(canvasClean, 0, 0);
-      ctxCleanM.restore();
-
-      capSideCleanMirroredTexture = new THREE.CanvasTexture(canvasCleanM);
-      capSideCleanMirroredTexture.colorSpace = THREE.SRGBColorSpace;
-      capSideCleanMirroredTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-      capSideCleanMirroredTexture.flipY = true;
-      capSideCleanMirroredTexture.needsUpdate = true;
-      capMultiviewUniforms.uCapSideCleanLeft.value = capSideCleanMirroredTexture;
-
-      // Actualizar referencias uTexRight / uTexLeft para retrocompatibilidad
-      capRightCanvasTexture = capSideClosedTexture;
-      capLeftCanvasTexture = capSideClosedMirroredTexture;
-      capMultiviewUniforms.uTexRight.value = capSideClosedTexture;
-      capMultiviewUniforms.uTexLeft.value = capSideClosedMirroredTexture;
-
-      tryInitCapMultiviewShader();
-    } catch (err) {
-      console.error('Error al procesar texturas laterales de la tapa:', err);
-    }
+    }, 0);
   }
 
   textureLoader.load(
-    './assets/models/temptation-mystic-cap-side-closed.png',
+    getAssetUrl('assets/models/temptation-mystic-cap-side-closed.png'),
     (loadedTex) => {
       closedImg = loadedTex.image;
       processCapSideTextures();
@@ -1172,7 +1027,7 @@ function setupCapSideTextures(targetCapGroup, capMesh) {
   );
 
   textureLoader.load(
-    './assets/models/temptation-mystic-cap-side-clean.png',
+    getAssetUrl('assets/models/temptation-mystic-cap-side-clean.png'),
     (loadedTex) => {
       cleanImg = loadedTex.image;
       processCapSideTextures();
@@ -2468,7 +2323,7 @@ function calculateResponsiveCameraDistance() {
 // ==========================================================================
 // Carga del Modelo GLB e Inicialización
 // ==========================================================================
-const MODEL_PATH = './assets/models/temptation-mystic-perforado.glb';
+const MODEL_PATH = getAssetUrl('assets/models/temptation-mystic-perforado.glb');
 const loader = new GLTFLoader();
 
 loader.load(
@@ -2602,54 +2457,7 @@ loader.load(
       cuelloMesh.geometry.computeVertexNormals();
     }
 
-    // Atomizador procedural
-    atomizerGroup = buildProceduralAtomizer();
-    bottleGroup.add(atomizerGroup);
-
-    // Manguera interna procedural visible sutilmente a través del vidrio
-    dipTubeGroup = buildDipTube();
-    bottleGroup.add(dipTubeGroup);
-
-    // Conector transparente escalonado entre collar y manguera
-    dipTubeConnectorGroup = buildDipTubeConnector();
-    bottleGroup.add(dipTubeConnectorGroup);
-
-    // Aplicar atomizerMirrorGoldMaterial exclusivamente al cuello y piezas metálicas del atomizador
-    [cuelloMesh, atomizerGroup].forEach((target) => {
-      if (!target) return;
-      target.traverse((child) => {
-        if (!child.isMesh) return;
-        if (
-          child === cuerpoMesh ||
-          child === tapaMesh ||
-          child.name === 'cuerpo' ||
-          child.name === 'tapa' ||
-          child.name === 'sprayPinhole' ||
-          child.name === 'atomizerGoldHighlight' ||
-          child.name === 'dipTubeMesh' ||
-          child.name === 'dipTubeEndCap' ||
-          child.name === 'connectorLevel1' ||
-          child.name === 'connectorLevel2' ||
-          child.name === 'connectorLevel3' ||
-          child.name === 'atomizerRing' ||
-          child.name === 'atomizerBevelRing' ||
-          child.name === 'atomizerButton' ||
-          child.name === 'sprayNozzleOuter'
-        ) {
-          return;
-        }
-        if (child.geometry) {
-          if (child.geometry.getAttribute('color')) {
-            child.geometry.deleteAttribute('color');
-          }
-          child.geometry.computeVertexNormals();
-        }
-        child.material = atomizerMirrorGoldMaterial;
-      });
-    });
-
-    // 5. La creación de la proyección debe ejecutarse únicamente después de que el GLB haya terminado de cargar,
-    // cuerpoMesh exista, la geometría del cuerpo exista y el bounding box sea válido
+    // Configuración de dimensiones y referencias
     const isBoundingBoxValid =
       !cuerpoBox.isEmpty() &&
       Number.isFinite(cuerpoSize.x) && cuerpoSize.x > 0 &&
@@ -2661,61 +2469,9 @@ loader.load(
     savedCuerpoBox = cuerpoBox;
     savedLocalBox = localBox;
     savedLocalSize = localSize;
-
-    if (cuerpoMesh && cuerpoMesh.geometry && isBoundingBoxValid) {
-      setupFrontPhotoProjection(cuerpoMesh, cuerpoSize, cuerpoCenter, cuerpoBox);
-    } else {
-      console.warn('Condiciones de geometría no válidas para proyección frontal.');
-      cuerpoMesh.visible = true;
-    }
-
-    // 2 & 3. Simulación visual del agujero central desactivada (el modelo perforado ya cuenta con orificio real)
-    // buildSimulatedCapHole(capGroup, tapaMesh);
-
-    // 3, 4 y 5. Proyección fotográfica frontal de la tapa unida directamente a capGroup
-    setupCapFrontPhotoProjection(capGroup, tapaMesh);
-
-    // Cargar texturas limpias de la tapa para elevación
-    setupCapCleanTextures();
-
-    // 4, 5, 6 y 7. Proyecciones fotográficas posteriores (cuerpo y tapa)
-    setupBackPhotoProjections(cuerpoMesh, cuerpoSize, cuerpoCenter, cuerpoBox, capGroup, tapaMesh);
-
-    // Proyecciones fotográficas laterales (cuerpo, tapa y cuello)
-    setupSidePhotoProjections(cuerpoMesh, cuerpoSize, cuerpoCenter, cuerpoBox, capGroup, tapaMesh, cuelloMesh);
-    setupCapSideTextures(capGroup, tapaMesh);
-
-    // Inicializar shader multivista del cuerpo si las texturas ya están preparadas
-    tryInitBodyMultiviewShader(cuerpoMesh, cuerpoSize, cuerpoBox, localBox, localSize);
-
-    // Inicializar shader multivista de la tapa si las texturas ya están preparadas
-    tapaMesh.geometry.computeBoundingBox();
-    const tapaLocalBox = tapaMesh.geometry.boundingBox;
-    const tapaLocalSize = tapaLocalBox.getSize(new THREE.Vector3());
-    const tapaBox = new THREE.Box3().setFromObject(tapaMesh);
-    tryInitCapMultiviewShader(tapaMesh, tapaBox, tapaLocalBox, tapaLocalSize);
-
-    // 9. Luz exclusiva para el oro (PointLight vinculado a bottleGroup)
-    atomizerAccentLight = new THREE.PointLight(
-      0xffc66b,
-      0.32,
-      0.75,
-      2
-    );
-    atomizerAccentLight.name = 'atomizerAccentLight';
-    atomizerAccentLight.position.set(0.024, 0.035, 0.032);
-    bottleGroup.add(atomizerAccentLight);
-
-    // PASO 7, 8 y 9: Iluminación de estudio responsiva (softboxes y acento cuello)
-    setupResponsiveLights(cuerpoMesh, cuelloMesh);
-
-    // Sistema de partículas para el spray
-    initSprayParticleSystem();
-
-    // Cálculo de distancia de encuadre responsive basado en aspect, conservando orientación frontal exacta
     savedModelSize = size.clone();
-    savedBottleSize = size.clone();
 
+    // Configuración inicial de cámara y encuadre
     const cameraZ = calculateResponsiveCameraDistance();
     camera.position.set(0, 0, cameraZ);
     camera.lookAt(0, 0, 0);
@@ -2728,17 +2484,73 @@ loader.load(
     initialCameraPos = camera.position.clone();
     initialTarget = controls.target.clone();
 
-    // Inicializar inmediatamente la proyección del atomizador sobre la tapa
-    updateCapParallax(true);
+    // Renderizar de inmediato el primer fotograma visible del frasco base (desbloquea FCP/LCP al instante)
+    renderer.render(scene, camera);
 
-    console.group('🏺 [Temptation Mystic 3D] Estructura y Sistema de Spray');
-    console.log('%c● Modelo 3D cargado y centrado', 'color: #e5c158; font-weight: bold;');
-    console.log('%c● Sistema de partículas (550 gotas AdditiveBlending)', 'color: #f7cad0; font-weight: bold;', sprayPoints);
-    console.groupEnd();
+    // ETAPA 1 (Siguiente ciclo de animación): Montaje de atomizador procedural, luces secundarias y partículas
+    requestAnimationFrame(() => {
+      atomizerGroup = buildProceduralAtomizer();
+      bottleGroup.add(atomizerGroup);
 
-    if (loadingOverlay) {
-      loadingOverlay.classList.add('is-hidden');
-    }
+      dipTubeGroup = buildDipTube();
+      bottleGroup.add(dipTubeGroup);
+
+      dipTubeConnectorGroup = buildDipTubeConnector();
+      bottleGroup.add(dipTubeConnectorGroup);
+
+      atomizerAccentLight = new THREE.PointLight(
+        0xffc66b,
+        0.32,
+        0.75,
+        2
+      );
+      atomizerAccentLight.name = 'atomizerAccentLight';
+      atomizerAccentLight.position.set(0.024, 0.035, 0.032);
+      bottleGroup.add(atomizerAccentLight);
+
+      setupResponsiveLights(cuerpoMesh, cuelloMesh);
+      initSprayParticleSystem();
+
+      tapaMesh.geometry.computeBoundingBox();
+      const tapaLocalBox = tapaMesh.geometry.boundingBox;
+      const tapaLocalSize = tapaLocalBox.getSize(new THREE.Vector3());
+      const tapaBox = new THREE.Box3().setFromObject(tapaMesh);
+      tryInitCapMultiviewShader(tapaMesh, tapaBox, tapaLocalBox, tapaLocalSize);
+      tryInitBodyMultiviewShader(cuerpoMesh, cuerpoSize, cuerpoBox, localBox, localSize);
+
+      updateCapParallax(true);
+
+      const hideLoading = () => {
+        if (loadingOverlay) {
+          loadingOverlay.classList.add('is-hidden');
+        }
+      };
+
+      if (typeof renderer.compileAsync === 'function') {
+        renderer.compileAsync(scene, camera).then(hideLoading).catch(hideLoading);
+      } else {
+        hideLoading();
+      }
+
+      // ETAPA 2: Disparar proyecciones fotográficas frontales prioritarias (en el siguiente tick)
+      setTimeout(() => {
+        if (cuerpoMesh && cuerpoMesh.geometry && isBoundingBoxValid) {
+          setupFrontPhotoProjection(cuerpoMesh, cuerpoSize, cuerpoCenter, cuerpoBox);
+        } else {
+          console.warn('Condiciones de geometría no válidas para proyección frontal.');
+          cuerpoMesh.visible = true;
+        }
+        setupCapFrontPhotoProjection(capGroup, tapaMesh);
+      }, 16);
+
+      // ETAPA 3: Disparar proyecciones secundarias (posteriores, laterales y limpias) de forma escalonada
+      setTimeout(() => {
+        setupCapCleanTextures();
+        setupBackPhotoProjections(cuerpoMesh, cuerpoSize, cuerpoCenter, cuerpoBox, capGroup, tapaMesh);
+        setupSidePhotoProjections(cuerpoMesh, cuerpoSize, cuerpoCenter, cuerpoBox, capGroup, tapaMesh, cuelloMesh);
+        setupCapSideTextures(capGroup, tapaMesh);
+      }, 60);
+    });
   },
   (progress) => {
     if (progress.total > 0 && loadingText) {
@@ -2962,7 +2774,7 @@ function onWindowResize() {
   camera.updateProjectionMatrix();
 
   renderer.setSize(width, height);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(getAdaptivePixelRatio());
 
   // Ajuste de encuadre responsive manteniendo la dirección visual actual
   const targetDist = calculateResponsiveCameraDistance();
