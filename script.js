@@ -1,23 +1,97 @@
 /* ==========================================================================
    Temptation Mystic - Interactive Cinematic Scroll Experience
-   Pure CSS/HTML/JS — No Canvas, No WebGL, No Three.js
+   Hybrid 3D Three.js & Scroll Engine
    ========================================================================== */
 
 import introDesktopUrl from "./assets/intro-desktop.mp4";
 import introMobileUrl from "./assets/intro-mobile.mp4";
 import ambientAudioUrl from "./assets/ethereal-pulse.mp3";
+import { initScene3D, updateSceneOnScroll, triggerSpray } from "./src/scene3d.js";
 
 document.addEventListener("DOMContentLoaded", () => {
+  // ==========================================================================
+  // Preloader con incremento fluido basado en tiempo (Fallback fluido 1.2s)
+  // Asegura que #loader-percentage actualice su texto de 0% a 100% de manera
+  // continua y fluida al arrancar la página, garantizando siempre llegar a 100.
+  // ==========================================================================
+  function setupPreloader() {
+    const progressBarEl = document.getElementById("progress-bar");
+    const preloaderEl = document.getElementById("preloader");
+    const percentageEl = document.getElementById("loader-percentage");
+
+    if (!preloaderEl) return;
+
+    let currentDisplayedPct = 0;
+    let targetPct = 0;
+    let isDismissed = false;
+    const durationMs = 1200; // 1.2 segundos exactos
+    const startTime = performance.now();
+
+    const updateLoaderUI = (val) => {
+      const rounded = Math.min(100, Math.max(0, Math.round(val)));
+      if (progressBarEl) progressBarEl.style.width = `${rounded}%`;
+      if (percentageEl) percentageEl.textContent = `${rounded}%`;
+      if (preloaderEl) preloaderEl.setAttribute("aria-valuenow", String(rounded));
+    };
+
+    const dismissPreloader = () => {
+      if (isDismissed) return;
+      isDismissed = true;
+      updateLoaderUI(100);
+      preloaderEl.classList.add("is-fading");
+      setTimeout(() => {
+        preloaderEl.remove();
+      }, 800);
+    };
+
+    // Si LoadingManager nativo reporta progreso activo, se sincroniza inmediatamente
+    window.__updatePreloaderProgress = (pct) => {
+      targetPct = Math.max(targetPct, pct);
+    };
+
+    const tickPreloader = (now) => {
+      if (isDismissed) return;
+
+      const elapsed = now - startTime;
+      const timeRatio = Math.min(1, elapsed / durationMs);
+
+      // Incremento basado en tiempo para garantizar 0 a 100% en 1.2s
+      const timeTarget = timeRatio * 100;
+      const effectiveTarget = Math.max(timeTarget, targetPct);
+
+      // Interpolación suave y orgánica
+      if (currentDisplayedPct < effectiveTarget) {
+        currentDisplayedPct += (effectiveTarget - currentDisplayedPct) * 0.22;
+        if (Math.abs(effectiveTarget - currentDisplayedPct) < 0.4) {
+          currentDisplayedPct = effectiveTarget;
+        }
+        updateLoaderUI(currentDisplayedPct);
+      }
+
+      if (elapsed >= durationMs && currentDisplayedPct >= 99.5) {
+        updateLoaderUI(100);
+        setTimeout(dismissPreloader, 200);
+        return;
+      }
+
+      requestAnimationFrame(tickPreloader);
+    };
+
+    requestAnimationFrame(tickPreloader);
+  }
+
+  setupPreloader();
+
   // DOM Elements
   const introScreen = document.getElementById("intro");
   const playButton = document.getElementById("playButton");
   const videoScreen = document.getElementById("videoScreen");
   const introVideo = document.getElementById("introVideo");
-  const skipButton = document.getElementById("skipButton");
+  const skipButton = document.getElementById("skipButton") || document.getElementById("skip-intro") || document.querySelector(".skip-intro-btn");
   const story = document.getElementById("story");
 
-  const bgOne = document.getElementById("bgOne");
-  const bgTwo = document.getElementById("bgTwo");
+  const bgIntro = document.getElementById("bg-intro");
+  const bgFinal = document.getElementById("bg-final");
   // Elementos 2D retirados en Fase 1 (integración de WebGL Canvas)
   // const photoStage = document.getElementById("photoStage");
   // const productMain = document.getElementById("productMain");
@@ -30,6 +104,16 @@ document.addEventListener("DOMContentLoaded", () => {
   let targetProgress = 0;
   let currentProgress = 0;
   let storyStarted = false;
+  let scene3dInitialized = false;
+
+  function ensureScene3D() {
+    if (scene3dInitialized) return;
+    const webglCanvas = document.getElementById("webgl-canvas");
+    if (webglCanvas) {
+      scene3dInitialized = true;
+      initScene3D(webglCanvas);
+    }
+  }
 
   // Ambient Audio
   const ambientAudio = new Audio(ambientAudioUrl);
@@ -69,6 +153,8 @@ document.addEventListener("DOMContentLoaded", () => {
     storyStarted = true;
     updateTargetProgress();
 
+    ensureScene3D();
+
     ambientAudio.currentTime = 0;
     ambientAudio.play().catch(() => {
       ambientAudio.muted = true;
@@ -83,6 +169,9 @@ document.addEventListener("DOMContentLoaded", () => {
     introVideo.muted = false;
     introScreen.classList.add("is-fading");
 
+    // Precalentamiento diferido de la escena 3D durante la reproducción del video
+    setTimeout(ensureScene3D, 800);
+
     setTimeout(() => {
       introScreen.classList.add("is-hidden");
       videoScreen.classList.remove("is-hidden");
@@ -95,6 +184,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   introVideo?.addEventListener("ended", showStory);
   skipButton?.addEventListener("click", showStory);
+
+  // Inicialización directa si story ya se encuentra visible
+  if (story && !story.classList.contains("is-hidden")) {
+    ensureScene3D();
+  }
 
   // -------------------------------------------------------------
   // MAIN SCROLL SCENE ENGINE
@@ -109,12 +203,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const backgroundSwap = smoothstep(0.1, 0.38, progress);
     const finalReveal = smoothstep(0.68, 0.92, progress);
 
-    // 1. Fondos Parallax
-    if (bgOne && bgTwo) {
-      bgOne.style.opacity = (1 - backgroundSwap * 0.82).toFixed(3);
-      bgTwo.style.opacity = (0.12 + backgroundSwap * 0.88).toFixed(3);
-      bgOne.style.transform = `scale(${1.03 + progress * 0.12}) translate3d(0, ${progress * -70}px, 0)`;
-      bgTwo.style.transform = `scale(${1.11 - progress * 0.05}) translate3d(0, ${progress * -34}px, 0)`;
+    // 1. Fondos fotográficos en capas (Parallax cinemático)
+    if (bgIntro) {
+      bgIntro.style.transform = `scale(${1.02 + progress * 0.06}) translate3d(0, ${progress * -40}px, 0)`;
+    }
+    if (bgFinal) {
+      bgFinal.style.transform = `scale(${1.06 - (1.0 - progress) * 0.04}) translate3d(0, ${(1.0 - progress) * 30}px, 0)`;
     }
 
     // 2. Transición 3D (Se integrará en la siguiente fase de Scrollytelling)
@@ -139,6 +233,7 @@ document.addEventListener("DOMContentLoaded", () => {
   function animate() {
     currentProgress += (targetProgress - currentProgress) * 0.12;
     applyScrollScene(currentProgress);
+    updateSceneOnScroll(currentProgress);
     requestAnimationFrame(animate);
   }
 

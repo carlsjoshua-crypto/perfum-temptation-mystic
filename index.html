@@ -12,9 +12,26 @@
     href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Montserrat:wght@300;400;500;600;700&display=swap"
     rel="stylesheet">
   <link rel="stylesheet" href="./styles.css" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23120308'/><text y='70' x='50' text-anchor='middle' font-family='serif' font-size='65' fill='%23ffc66b'>Y</text></svg>">
 </head>
 
 <body>
+  <!-- ================================================================
+       PRELOADER — Oculta la inicialización 3D hasta que el modelo esté listo
+       Controlado por THREE.LoadingManager en src/scene3d.js
+       ================================================================ -->
+  <div id="preloader" role="progressbar" aria-label="Cargando experiencia Temptation Mystic" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+    <div class="preloader-inner">
+      <span class="preloader-brand">YANBAL</span>
+      <p class="preloader-title">Temptation Mystic</p>
+      <div class="preloader-bar-track" aria-hidden="true">
+        <div id="progress-bar"></div>
+      </div>
+      <div id="loader-percentage" style="font-family: serif; font-size: 1.5rem; color: #ffc66b; letter-spacing: 2px; margin-top: 15px; font-weight: 300;">0%</div>
+      <span class="preloader-label" aria-hidden="true">Cargando experiencia&hellip;</span>
+    </div>
+  </div>
+
   <main class="experience" aria-label="Experiencia Temptation Mystic">
     <!-- PANTALLA INTRO -->
     <section class="intro-screen" id="intro">
@@ -28,7 +45,7 @@
         <h1 class="glow-text">Temptation Mystic</h1>
         <p class="subtitle">Eau de Parfum</p>
         <div class="play-wrapper">
-          <button class="play-button" id="playButton" type="button" aria-label="Iniciar experiencia de video">
+          <button class="cta-button" id="playButton" type="button" aria-label="Iniciar experiencia de video">
             <svg class="play-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
               <path d="M8 5V19L19 12L8 5Z" fill="currentColor" />
             </svg>
@@ -42,9 +59,9 @@
     <section class="video-screen is-hidden" id="videoScreen" aria-label="Video de introducción">
       <video id="introVideo" playsinline preload="auto"></video>
       <div class="video-overlay" aria-hidden="true"></div>
-      <button class="skip-button" id="skipButton" type="button">
-        <span>Saltar intro</span>
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+      <button class="skip-button skip-intro-btn" id="skipButton" type="button" aria-label="Saltar introducción de video">
+        <span>SALTAR INTRO</span>
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
           <polyline points="9 18 15 12 9 6"></polyline>
         </svg>
       </button>
@@ -52,9 +69,9 @@
 
     <!-- EXPERIENCIA DE SCROLL -->
     <section class="story is-hidden" id="story">
-      <!-- Fondos en Capas (Parallax) -->
-      <div class="story-bg story-bg-one" id="bgOne" aria-hidden="true"></div>
-      <div class="story-bg story-bg-two" id="bgTwo" aria-hidden="true"></div>
+      <!-- Fondos en Capas para Acto 1 y Acto 3 -->
+      <div id="bg-intro" aria-hidden="true"></div>
+      <div id="bg-final" aria-hidden="true"></div>
       <div class="story-vignette" aria-hidden="true"></div>
 
       <header class="brand-header">
@@ -69,21 +86,40 @@
           <canvas id="webgl-canvas"></canvas>
         </div>
 
-        <!-- Tarjetas Informativas dinámicas durante el scroll -->
+        <!-- ================================================================
+             Tarjetas de Scroll-Telling — Controladas por scene3d.js
+             opacity base 0, scene3d las anima vía style.opacity según progress
+             ================================================================ -->
         <div class="story-cards">
-          <div class="info-card card-1 active" id="card1">
-            <span class="card-tag">FRAGANCIA DE LUXE</span>
-            <h3>La Esencia de la Seducción</h3>
-            <p>Un elixir misterioso que despierta la atracción absoluta con acordes embriagadores de cereza mística y
-              madera de nogal.</p>
+
+          <!-- Acto 1 (p 0.0 → 0.22): Identidad de la fragancia -->
+          <div class="info-card card-1" id="text-intro" aria-live="polite">
+            <h3>FRAGANCIA DE LUXE</h3>
+            <h2>La Esencia de la Seducción</h2>
           </div>
 
-          <div class="info-card card-2" id="card2">
-            <span class="card-tag">CONOCE LA FRAGANCIA</span>
-            <h3>¿Qué es?</h3>
-            <p>Es hora de seducir al mundo con ese poder único que hay dentro de ti. Descúbrelo y revélalo con orgullo.</p>
-            <p class="card-subtext">Temptation Mystic, un perfume intenso y seductor, con exquisitas notas de cereza jugosa, el carácter audaz y adictivo del aroma de café, sobre un fondo cálido y exclusivo de Amberwood.</p>
+          <!-- Acto 2 (p 0.25 → 0.58): Notas Olfativas Esparcidas -->
+          <div class="info-card card-2" id="text-spray-ritual" aria-live="polite">
+            <div class="nota-olfativa nota-1">
+              <img src="/assets/ingredientes/cereza-miniatura.webp" alt="Cereza Jugosa" class="nota-thumb" />
+              <span class="nota-nombre">Cereza Jugosa</span>
+            </div>
+            <div class="nota-olfativa nota-2">
+              <img src="/assets/ingredientes/cafe-miniatura.webp" alt="Café" class="nota-thumb" />
+              <span class="nota-nombre">Café</span>
+            </div>
+            <div class="nota-olfativa nota-3">
+              <img src="/assets/ingredientes/amberwood-miniatura.webp" alt="Amberwood" class="nota-thumb" />
+              <span class="nota-nombre">Amberwood</span>
+            </div>
           </div>
+
+          <!-- Acto 3 (p 0.60 → 1.0): Cierre de Alta Perfumería -->
+          <div class="info-card card-3" id="text-deep-mystic" aria-live="polite">
+            <p class="final-quote">Es hora de seducir al mundo con ese poder único que hay dentro de ti. Descúbrelo y revélalo con orgullo.</p>
+            <button id="btn-free-mode" class="cta-button" style="margin-top: 20px;">Explorar en 360°</button>
+          </div>
+
         </div>
 
         <!-- Indicador de desplazamiento por scroll -->
@@ -94,6 +130,7 @@
           </div>
         </div>
       </div>
+
 
       <!-- Sección Final CTA -->
       <div class="story-footer">
@@ -107,6 +144,7 @@
           </a>
         </div>
       </div>
+      <button id="btn-exit-free-mode" class="cta-button" style="position: fixed; bottom: 34px; left: 50%; transform: translateX(-50%); z-index: 9999; opacity: 0; pointer-events: none; transition: opacity 0.4s ease-out;">Finalizar y Ver Catálogo</button>
 
       <!-- Espacio amplio para controlar el scroll del sticky viewport -->
       <div class="scroll-space" aria-hidden="true"></div>
@@ -114,6 +152,18 @@
   </main>
 
   <script type="module" src="./script.js"></script>
+  <script>
+    // Failsafe absoluto de seguridad para asegurar la salida del preloader en caso de fallo crítico
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        const preloader = document.getElementById('preloader');
+        if (preloader) {
+          preloader.classList.add('is-fading');
+          setTimeout(() => preloader.remove(), 800);
+        }
+      }, 3500);
+    });
+  </script>
 </body>
 
 </html>
