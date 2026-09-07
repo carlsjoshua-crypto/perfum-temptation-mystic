@@ -4,7 +4,7 @@
    ========================================================================== */
 
 import introDesktopUrl from "./assets/intro-desktop.mp4";
-import introMobileUrl from "./assets/intro-mobile.mp4";
+import introMobileUrl from "./assets/intro-mobile-lite.mp4";
 import ambientAudioUrl from "./assets/temptation-mystic-ambient.mp3";
 import { initScene3D, updateSceneOnScroll, triggerSpray } from "./src/scene3d.js";
 
