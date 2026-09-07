@@ -1,5 +1,26 @@
-node_modules
-.DS_Store
-dist
+# Dependencies
+node_modules/
+
+# Production & Build outputs
+dist/
+dist-ssr/
+
+# Local & Environment files
+*.local
 .env
-.env.local
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE and Editor files
+.vscode/
+.idea/
+
+# Backups
+*.BAK

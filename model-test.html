@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="es">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Visualizador de prueba 3D para el perfume Temptation Mystic de Yanbal." />
+  <title>Temptation Mystic - 3D Model Test</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Montserrat:wght@300;400;500;600;700&display=swap"
+    media="print"
+    onload="this.media='all'" />
+  <noscript>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Montserrat:wght@300;400;500;600;700&display=swap" />
+  </noscript>
+  <link rel="stylesheet" href="./model-test.css" />
+</head>
+
+<body>
+  <!-- 3D Canvas Container -->
+  <div id="canvas-container">
+    <canvas id="webgl-canvas"></canvas>
+  </div>
+
+  <!-- Capa HTML de Niebla a Pantalla Completa -->
+  <div class="screen-mist-overlay" id="screenMistOverlay" aria-hidden="true"></div>
+
+  <!-- Loading State -->
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="spinner"></div>
+    <p class="loading-text" id="loadingText">Cargando modelo 3D...</p>
+  </div>
+
+  <!-- Interface Overlay -->
+  <div class="ui-overlay" id="uiOverlay">
+
+
+    <!-- Interactive Actions & Footer Controls -->
+    <footer class="footer-bar" id="footerBar">
+      <div class="actions-group">
+        <button class="action-btn-primary" id="uncapBtn" type="button" aria-label="Probar destapado">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 3v9M8 7l4-4 4 4" />
+            <rect x="5" y="12" width="14" height="9" rx="2" />
+            <circle cx="12" cy="16" r="1" />
+          </svg>
+          <span>Probar destapado</span>
+        </button>
+        <button class="reset-btn" id="resetCamBtn" type="button">Restablecer Cámara</button>
+      </div>
+
+      <div class="controls-hint" id="controlsHint">
+        <div class="hint-action">
+          <span class="hint-key">Arrastrar:</span>
+          <span>Rotar</span>
+        </div>
+        <div class="hint-action">
+          <span class="hint-key">Rueda:</span>
+          <span>Zoom</span>
+        </div>
+        <div class="hint-action">
+          <span class="hint-key">Clic Der.:</span>
+          <span>Mover</span>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module" src="./model-test.js"></script>
+</body>
+
+</html>
