@@ -5,7 +5,7 @@
 
 import introDesktopUrl from "./assets/intro-desktop.mp4";
 import introMobileUrl from "./assets/intro-mobile.mp4";
-import ambientAudioUrl from "./assets/ethereal-pulse.mp3";
+import ambientAudioUrl from "./assets/temptation-mystic-ambient.mp3";
 import { initScene3D, updateSceneOnScroll, triggerSpray } from "./src/scene3d.js";
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -104,6 +104,7 @@ document.addEventListener("DOMContentLoaded", () => {
   let targetProgress = 0;
   let currentProgress = 0;
   let storyStarted = false;
+  let ambientAudioStarted = false;
   let scene3dInitialized = false;
 
   function ensureScene3D() {
@@ -160,6 +161,7 @@ document.addEventListener("DOMContentLoaded", () => {
       ambientAudio.muted = true;
       ambientAudio.play().catch(() => {});
     });
+    ambientAudioStarted = true;
   }
 
   playButton?.addEventListener("click", () => {
@@ -184,6 +186,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
   introVideo?.addEventListener("ended", showStory);
   skipButton?.addEventListener("click", showStory);
+
+  // Control de reproducción en segundo plano (cambio de pestaña)
+  document.addEventListener("visibilitychange", () => {
+    if (!ambientAudioStarted) return;
+
+    if (document.hidden) {
+      ambientAudio.pause();
+    } else {
+      ambientAudio.play().catch(() => {});
+    }
+  });
 
   // Inicialización directa si story ya se encuentra visible
   if (story && !story.classList.contains("is-hidden")) {
